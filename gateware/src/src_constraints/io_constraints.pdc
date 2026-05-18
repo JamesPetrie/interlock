@@ -110,6 +110,31 @@ set_io -port_name LINK_OK_1  \
     -DIRECTION OUTPUT
 
 
+# Sub-PR #5 debug LEDs (LED_8 … LED_11) — see top.tcl for what each shows.
+set_io -port_name LED_DBG_MTXACPT_1  \
+    -pin_name C27                    \
+    -fixed true                      \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_DBG_MTXACPT_0  \
+    -pin_name F23                    \
+    -fixed true                      \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_DBG_RCG_ERR_1  \
+    -pin_name H22                    \
+    -fixed true                      \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_DBG_RX1_CNT  \
+    -pin_name H21                  \
+    -fixed true                    \
+    -DIRECTION OUTPUT
+
+
 set_io -port_name REFCLK_N  \
     -pin_name U5            \
     -fixed true             \
