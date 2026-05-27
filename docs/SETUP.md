@@ -43,7 +43,7 @@ The 8 GB RAM minimum is real — PolarFire P&R for this repo peaks around
 ~1 GB of swap on an 8 GB system. Larger designs may push further. If
 you're paying by RAM, 8 GB + 8 GB swap is the sweet spot.
 
-Disk: Libero itself is ~5 GB installed, the v2024.2 web installer is ~250
+Disk: Libero itself is ~30 GB installed, the v2024.2 web installer is ~250
 MB, the program-debug install adds another ~1 GB, plus per-project build
 outputs (~50–200 MB each). 80 GB is comfortable, 150 GB is generous.
 
@@ -82,12 +82,13 @@ You need a Microchip account ([microchip.com](https://www.microchip.com/),
 free to register). Once logged in, download:
 
 - **Libero SoC v2024.2 Linux Web installer** (~250 MB):
-  https://www.microchip.com/en-us/products/fpgas-and-plds/fpga-and-soc-design-tools/fpga/libero-software-later-versions
+  Full install for synthesis (downloads full installer on the fly)
+  https://www.microchip.com/en-us/products/fpgas-and-plds/fpga-and-soc-design-tools/fpga-software-downloads
 
-- **Program and Debug v2024.2 (Linux)** (~1 GB, optional but recommended):
-  same page. Contains FlashPro / SoftConsole pieces; on a headless build
-  VM you can skip it, but it's small enough that having it available is
-  convenient.
+- **Program and Debug v2024.2 (Linux)** (~1 GB):
+  Separate FlashPro / SoftConsole pieces; small subset of tools for flashing the board on the local machince.
+  Usefull when sythensys runs on a different machine and storage is limited.
+  https://www.microchip.com/en-us/products/fpgas-and-plds/fpga-and-soc-design-tools/programming-and-debug/lab#tabs-0943f4d4b7-item-c864374c9e-tab
 
 `scp` the installer to the VM, then:
 
@@ -119,8 +120,8 @@ Libero needs a license file ("Silver", "Gold", or "Platinum" tier). The
 1. Find the VM's MAC address: `cat /sys/class/net/eth0/address`. This
    needs to match exactly when the license is generated. Hetzner does NOT
    typically reassign MACs, but other clouds might — pin the VM if you can.
-2. Sign in to [microchipdirect.com](https://www.microchipdirect.com/),
-   request a "Libero Silver Software License" for Linux (free for evaluation
+2. Sign in to [microchipdirect.com](https://www.microchipdirect.com/fpga-software-products),
+   request a "Libero Silver 1Yr Floating License for Windows/Linux Server" (free for evaluation
    purposes; supports MPF300TS-1FCG1152I).
 3. Paste the VM's MAC during the request; Microchip emails the `.dat`
    license file within minutes.
@@ -167,7 +168,7 @@ exercise; templates are easy to find.)
 
 ```bash
 # Should print version info + license info without errors
-/usr/local/microchip/Libero_SoC_v2024.2/Libero/bin64/lmstat -a -c 1702@localhost
+/usr/local/microchip/Libero_SoC_2024.2/Libero/bin64/lmutil lmstat -a -c 1702@localhost
 ```
 
 ## 5. Post-install fixes for headless Ubuntu 24.04

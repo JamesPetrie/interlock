@@ -5,7 +5,7 @@
 # Usage:
 #   ./build.sh            # build only
 #   ./build.sh --scp DST  # scp the .job to DST after build (e.g., laptop:~/Desktop/)
-set -e
+set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GATEWARE_DIR="$REPO_ROOT/gateware"
@@ -30,9 +30,8 @@ echo "=== starting build at $(date -Iseconds) ==="
 echo "log: $LOG"
 cd "$GATEWARE_DIR"
 SECONDS=0
-if ! libero "SCRIPT:script.tcl" > "$LOG" 2>&1; then
+if ! libero "SCRIPT:script.tcl" 2>&1 | tee "$LOG" 2>&1; then
     echo "BUILD FAILED — see $LOG"
-    tail -30 "$LOG"
     exit 1
 fi
 ELAPSED=$SECONDS
