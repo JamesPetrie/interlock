@@ -6,6 +6,7 @@ import_files -hdl_source {./src/src_hdl/pkt_counter.sv}
 import_files -hdl_source {./src/src_hdl/sticky_bit.sv}
 import_files -hdl_source {./src/src_hdl/mdio_combiner.sv}
 import_files -hdl_source {./src/src_hdl/tse1_loopback.sv}
+import_files -hdl_source {./src/src_hdl/fabric_bridge.sv}
 
 
 build_design_hierarchy 
