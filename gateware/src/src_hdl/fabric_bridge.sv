@@ -63,27 +63,43 @@ module fabric_bridge (
 );
 
   // ====================================================================
-  // 1 <- 0  : CORETSE_1 MAC-TX <- CORETSE_0 MAC-RX
+  // 1 <- 0  : CORETSE_1 MAC-TX <- fcs_recalc <- CORETSE_0 MAC-RX
   // ====================================================================
-  // Forward
-  assign tse1_mtx_rdy       = tse0_mrx_rdy;
-  assign tse1_mtx_sof       = tse0_mrx_sof;
-  assign tse1_mtx_eof       = tse0_mrx_eof;
-  assign tse1_mtx_dat       = tse0_mrx_dat;
-  assign tse1_mtx_bytevalid = tse0_mrx_bytevalid;
-  // Reverse
-  assign tse0_mrx_acpt      = tse1_mtx_acpt;
+  fcs_recalc fcs_0_to_1 (
+    .clk           (clk),
+    .rst_n         (rst_n),
+    .in_rdy        (tse0_mrx_rdy),
+    .in_acpt       (tse0_mrx_acpt),
+    .in_sof        (tse0_mrx_sof),
+    .in_eof        (tse0_mrx_eof),
+    .in_dat        (tse0_mrx_dat),
+    .in_bytevalid  (tse0_mrx_bytevalid),
+    .out_rdy       (tse1_mtx_rdy),
+    .out_acpt      (tse1_mtx_acpt),
+    .out_sof       (tse1_mtx_sof),
+    .out_eof       (tse1_mtx_eof),
+    .out_dat       (tse1_mtx_dat),
+    .out_bytevalid (tse1_mtx_bytevalid)
+  );
 
   // ====================================================================
-  // 0 <- 1  : CORETSE_0 MAC-TX <- CORETSE_1 MAC-RX
+  // 0 <- 1  : CORETSE_0 MAC-TX <- fcs_recalc <- CORETSE_1 MAC-RX
   // ====================================================================
-  // Forward
-  assign tse0_mtx_rdy       = tse1_mrx_rdy;
-  assign tse0_mtx_sof       = tse1_mrx_sof;
-  assign tse0_mtx_eof       = tse1_mrx_eof;
-  assign tse0_mtx_dat       = tse1_mrx_dat;
-  assign tse0_mtx_bytevalid = tse1_mrx_bytevalid;
-  // Reverse
-  assign tse1_mrx_acpt      = tse0_mtx_acpt;
+  fcs_recalc fcs_1_to_0 (
+    .clk           (clk),
+    .rst_n         (rst_n),
+    .in_rdy        (tse1_mrx_rdy),
+    .in_acpt       (tse1_mrx_acpt),
+    .in_sof        (tse1_mrx_sof),
+    .in_eof        (tse1_mrx_eof),
+    .in_dat        (tse1_mrx_dat),
+    .in_bytevalid  (tse1_mrx_bytevalid),
+    .out_rdy       (tse0_mtx_rdy),
+    .out_acpt      (tse0_mtx_acpt),
+    .out_sof       (tse0_mtx_sof),
+    .out_eof       (tse0_mtx_eof),
+    .out_dat       (tse0_mtx_dat),
+    .out_bytevalid (tse0_mtx_bytevalid)
+  );
 
 endmodule

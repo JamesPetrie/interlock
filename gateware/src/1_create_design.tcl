@@ -7,6 +7,7 @@ import_files -hdl_source {./src/src_hdl/sticky_bit.sv}
 import_files -hdl_source {./src/src_hdl/mdio_combiner.sv}
 import_files -hdl_source {./src/src_hdl/tse1_loopback.sv}
 import_files -hdl_source {./src/src_hdl/fabric_bridge.sv}
+import_files -hdl_source {./src/src_hdl/fcs_recalc.sv}
 
 
 build_design_hierarchy 

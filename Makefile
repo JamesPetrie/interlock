@@ -1,13 +1,13 @@
 # Repo-level entry points. Heavy lifting lives in tb/ and gateware/.
 
-.PHONY: test test-mac-bridge clean-test gateware help
+.PHONY: test test-fabric-bridge clean-test gateware help
 
 help:
 	@echo "Targets:"
-	@echo "  test            — run all cocotb unit tests"
-	@echo "  test-mac-bridge — run just the mac_bridge cocotb tests"
-	@echo "  clean-test      — remove cocotb sim_build dirs"
-	@echo "  gateware        — run ./build.sh (Libero synth, ~22 min)"
+	@echo "  test               — run all cocotb unit tests"
+	@echo "  test-fabric-bridge — run just the fabric_bridge cocotb tests"
+	@echo "  clean-test         — remove cocotb sim_build dirs"
+	@echo "  gateware           — run ./build.sh (Libero synth, ~22 min)"
 
 # Default Python venv for tests
 PYTHON ?= .venv/bin/python
@@ -19,12 +19,12 @@ PYTHON ?= .venv/bin/python
 
 SIM ?= icarus
 
-test: test-mac-bridge
+test: test-fabric-bridge
 
 VENV_BIN := $(realpath .)/.venv/bin
 
-test-mac-bridge: .venv
-	PATH=$(VENV_BIN):$$PATH $(MAKE) -C tb/test_mac_bridge SIM=$(SIM)
+test-fabric-bridge: .venv
+	PATH=$(VENV_BIN):$$PATH $(MAKE) -C tb/test_fabric_bridge SIM=$(SIM)
 
 clean-test:
 	find tb -type d -name sim_build -exec rm -rf {} +

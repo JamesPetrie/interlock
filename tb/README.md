@@ -9,7 +9,7 @@ with the venv installed.
 
 ```
 # From repo root
-make test-mac-bridge      # run mac_bridge tests
+make test-fabric-bridge   # run fabric_bridge tests
 make test                 # alias for all tests
 make clean-test           # wipe sim_build dirs
 ```
@@ -33,7 +33,7 @@ One sub-directory per top-level module under test. Each Makefile is ~10 lines.
 ## Adding a new test
 
 1. Pick a module name (e.g., `pkt_counter`).
-2. Create `tb/test_pkt_counter/Makefile` cribbed from `test_mac_bridge/Makefile`
+2. Create `tb/test_pkt_counter/Makefile` cribbed from `test_fabric_bridge/Makefile`
    — set `TOPLEVEL`, `MODULE`, `VERILOG_SOURCES`.
 3. Write `tb/test_pkt_counter/test_pkt_counter.py` with `@cocotb.test()` functions.
 4. Add a `test-<name>` target in the repo root Makefile.
@@ -46,8 +46,8 @@ Default is **Icarus Verilog** (`SIM=icarus`). Reliable, easy to install
 Verilator support is in `common.mk` (`SIM=verilator`) but Ubuntu 24.04's
 apt verilator (5.020) is older than cocotb 2.x needs (≥ 5.036). If you want
 verilator's speedup for large simulations, build it from source. For the
-testbenches we have today, icarus is fast enough (~0.3s for all
-`mac_bridge` tests).
+testbenches we have today, icarus is fast enough (~0.4s for all
+`fabric_bridge` tests).
 
 ## What's worth testing here vs. in hardware
 
