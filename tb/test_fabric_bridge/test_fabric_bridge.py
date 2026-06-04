@@ -1,10 +1,12 @@
 """cocotb testbench for fabric_bridge.sv.
 
-fabric_bridge is the module that routes both Ethernet directions through the
-fabric (replacing the direct CoreTSE-to-CoreTSE wiring), giving packet
-processing somewhere to live. This TB models the two CoreTSE MACs at the
-module boundary and checks that frames forward byte-exactly in both
-directions.
+fabric_bridge routes both Ethernet directions through the fabric, sanitizing
+each at the Ethernet layer (eth_deframe -> eth_reframe, canon_core bypassed
+for now): whatever DST/SRC/PAD/FCS a frame arrives with, it leaves with the
+direction's forced addresses, LENGTH preserved, zero PAD to the minimum frame
+size, and a freshly computed FCS. This TB models the two CoreTSE MACs at the
+module boundary and checks that the DATA forwards intact inside a canonical
+frame in both directions.
 
 MAC client (packet-FIFO) protocol — taken from Microchip's reference
 testbench CoreTSE_tb.v (tasks ftfrm / frfrm):
@@ -28,13 +30,43 @@ from types import SimpleNamespace
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ReadOnly, Combine
-from scapy.all import Ether
+
+# Must match fabric_bridge localparams
+MAC_CLIENT = 0x02_00_00_00_00_01
+MAC_SERVER = 0x02_00_00_00_00_02
+
+MIN_FRAME = 64
+FCS_BYTES = 4
 
 
 def eth_fcs(body: bytes) -> bytes:
-    """Ethernet/zlib CRC32 of `body` (Dst+Src+Type+Data+Pad — the FCS-protected
-    fields of a MAC frame), packed little-endian (wire order)."""
+    """Ethernet/zlib CRC32 of `body` (Dst+Src+Length+Data+Pad — the
+    FCS-protected fields of a MAC frame), packed little-endian (wire order)."""
     return zlib.crc32(body).to_bytes(4, "little")
+
+
+# --------------------------------------------------------------------------
+# Frame builders
+# --------------------------------------------------------------------------
+
+def eth_frame(dst: int, src: int, data: bytes, pad: bytes = None,
+              fcs: bytes = None) -> bytes:
+    """Assemble DST SRC LENGTH DATA PAD FCS. LENGTH = len(data). PAD defaults
+    to zeros up to the 64-byte minimum frame; pass `pad`/`fcs` to build a
+    non-canonical frame."""
+    body = (dst.to_bytes(6, "big") + src.to_bytes(6, "big")
+            + len(data).to_bytes(2, "big") + data)
+    if pad is None:
+        if len(body) + FCS_BYTES < MIN_FRAME:
+            body += bytes(MIN_FRAME - FCS_BYTES - len(body))
+    else:
+        body += pad
+    return body + (eth_fcs(body) if fcs is None else fcs)
+
+
+def payload(seed: int, n: int) -> bytes:
+    rng = random.Random(seed)
+    return bytes(rng.randint(0, 255) for _ in range(n))
 
 
 # --------------------------------------------------------------------------
@@ -65,24 +97,6 @@ def pack_frame(payload: bytes):
         bytevalid = (4 - rem) if (is_last and rem != 0) else 0
         words.append(Word(dat=dat, sof=int(w == 0), eof=int(is_last), bytevalid=bytevalid))
     return words
-
-
-def build_ether(size_bytes, payload_seed=0):
-    """Build an ethernet-shaped frame of total length `size_bytes`, where the
-    last 4 bytes are a valid CRC32 over the preceding `size_bytes-4` bytes —
-    i.e. the same shape CoreTSE delivers on its MAC client interface (frame
-    body + FCS, where "body" = Dst+Src+Type+Data+Pad). When this frame passes
-    through fcs_recalc, the output FCS is recomputed but must equal the
-    input FCS (since the body is unchanged), so output == input.
-
-    Total length must be >= 5 bytes (fcs_recalc requires >= 2 words)."""
-    assert size_bytes >= 5, "frame must be >= 5 bytes"
-    rng = random.Random(payload_seed)
-    body_len = size_bytes - 4
-    raw = bytes(Ether(src="02:00:00:00:00:01", dst="02:00:00:00:00:02", type=0x88B5))
-    fill = max(0, body_len - len(raw))
-    body = (raw + bytes(rng.randint(0, 255) for _ in range(fill)))[:body_len]
-    return body + eth_fcs(body)
 
 
 # --------------------------------------------------------------------------
@@ -157,9 +171,14 @@ async def receive_frames(dut, sink, expected_frames, throttle_prob=0.0, rng=None
 # Scaffolding
 # --------------------------------------------------------------------------
 
-# (source-bundle prefix, sink-bundle prefix) for each direction.
-A_TO_B = ("tse0_mrx_", "tse1_mtx_")   # Mac -> Spark
-B_TO_A = ("tse1_mrx_", "tse0_mtx_")   # Spark -> Mac
+# (source-bundle prefix, sink-bundle prefix, forced DST, forced SRC).
+REQ = ("tse0_mrx_", "tse1_mtx_", MAC_SERVER, MAC_CLIENT)   # client -> server
+RSP = ("tse1_mrx_", "tse0_mtx_", MAC_CLIENT, MAC_SERVER)   # server -> client
+
+
+def sanitized(direction, data: bytes) -> bytes:
+    """The frame the bridge must emit for `data` on `direction`."""
+    return eth_frame(direction[2], direction[3], data)
 
 
 async def reset(dut, period_ns=8):
@@ -178,22 +197,31 @@ async def reset(dut, period_ns=8):
         await RisingEdge(dut.clk)
 
 
-async def forward_check(dut, direction, payloads, throttle_prob=0.0, rng=None):
+async def forward_check(dut, direction, frames, datas, throttle_prob=0.0, rng=None):
+    """Drive `frames` into a direction; expect sanitized(data) out for each."""
     src = bundle(dut, direction[0])
     sink = bundle(dut, direction[1])
 
     async def send_all():
-        for p in payloads:
-            await drive_frame(dut, src, p)
+        for f in frames:
+            await drive_frame(dut, src, f)
 
     tx = cocotb.start_soon(send_all())
-    rx = cocotb.start_soon(receive_frames(dut, sink, len(payloads),
+    rx = cocotb.start_soon(receive_frames(dut, sink, len(frames),
                                           throttle_prob=throttle_prob, rng=rng))
     await Combine(tx, rx)
     got = rx.result()
-    assert len(got) == len(payloads), f"expected {len(payloads)} frames, got {len(got)}"
-    for idx, (g, exp) in enumerate(zip(got, payloads)):
-        assert g == exp, f"frame {idx} mismatch (len {len(exp)}): {g[:16].hex()} != {exp[:16].hex()}"
+    assert len(got) == len(frames), f"expected {len(frames)} frames, got {len(got)}"
+    for idx, (g, data) in enumerate(zip(got, datas)):
+        exp = sanitized(direction, data)
+        assert g == exp, (f"frame {idx} mismatch (len {len(g)} vs {len(exp)}): "
+                          f"{g[:20].hex()} != {exp[:20].hex()}")
+
+
+def canonical_frames(direction, datas):
+    """Input frames already in the direction's canonical form — the output
+    must then reproduce the input byte-for-byte."""
+    return [eth_frame(direction[2], direction[3], d) for d in datas]
 
 
 # --------------------------------------------------------------------------
@@ -201,71 +229,64 @@ async def forward_check(dut, direction, payloads, throttle_prob=0.0, rng=None):
 # --------------------------------------------------------------------------
 
 @cocotb.test()
-async def test_forward_a_to_b(dut):
-    """One frame Mac -> Spark (CORETSE_0 RX -> CORETSE_1 TX)."""
+async def test_forward_req(dut):
+    """One padded minimum frame client -> server (CORETSE_0 RX -> CORETSE_1 TX)."""
     await reset(dut)
-    await forward_check(dut, A_TO_B, [build_ether(64, payload_seed=1)])
+    datas = [payload(1, 18)]
+    await forward_check(dut, REQ, canonical_frames(REQ, datas), datas)
 
 
 @cocotb.test()
-async def test_forward_b_to_a(dut):
-    """One frame Spark -> Mac (CORETSE_1 RX -> CORETSE_0 TX)."""
+async def test_forward_rsp(dut):
+    """One frame server -> client; forced addresses are the request's swapped."""
     await reset(dut)
-    await forward_check(dut, B_TO_A, [build_ether(64, payload_seed=2)])
+    datas = [payload(2, 46)]
+    await forward_check(dut, RSP, canonical_frames(RSP, datas), datas)
 
 
 @cocotb.test()
 async def test_varying_sizes(dut):
-    """Sizes that exercise every BYTEVALID remainder (len % 4 = 0/1/2/3)."""
+    """Every LENGTH % 4 alignment, padded and unpadded sizes, up to max DATA."""
     await reset(dut)
-    sizes = [60, 61, 62, 63, 64, 73, 128, 200, 256, 1518]
-    payloads = [build_ether(s, payload_seed=s) for s in sizes]
-    await forward_check(dut, A_TO_B, payloads)
+    sizes = [13, 14, 15, 16, 45, 46, 47, 48, 49, 100, 1497, 1498, 1499, 1500]
+    datas = [payload(s, s) for s in sizes]
+    await forward_check(dut, REQ, canonical_frames(REQ, datas), datas)
+
+
+@cocotb.test()
+async def test_sanitization(dut):
+    """Junk DST/SRC, garbage PAD and a bogus FCS go in; a fully canonical
+    frame comes out (forced addresses, zero PAD, recomputed FCS)."""
+    await reset(dut)
+    rng = random.Random(99)
+    frames, datas = [], []
+    for n in (18, 46, 60):
+        data = payload(500 + n, n)
+        pad = bytes(rng.randint(1, 255) for _ in range(max(0, 46 - n)))
+        frames.append(eth_frame(rng.getrandbits(48), rng.getrandbits(48), data,
+                                pad=pad, fcs=b"\xde\xad\xbe\xef"))
+        datas.append(data)
+    await forward_check(dut, REQ, frames, datas)
 
 
 @cocotb.test()
 async def test_backpressure(dut):
-    """Spark-side MAC TX randomly throttles ACPT; no bytes may be lost."""
+    """Server-side MAC TX randomly throttles ACPT; no bytes may be lost."""
     await reset(dut)
-    payloads = [build_ether(80 + 13 * i, payload_seed=100 + i) for i in range(6)]
-    await forward_check(dut, A_TO_B, payloads, throttle_prob=0.4, rng=random.Random(7))
+    datas = [payload(100 + i, 50 + 13 * i) for i in range(6)]
+    await forward_check(dut, REQ, canonical_frames(REQ, datas), datas,
+                        throttle_prob=0.4, rng=random.Random(7))
 
 
 @cocotb.test()
 async def test_bidirectional_concurrent(dut):
     """Both directions active at once — verify no cross-talk between the two
-    independent forwarding paths."""
+    independent sanitizing paths."""
     await reset(dut)
-    ab = [build_ether(64 + 4 * i, payload_seed=300 + i) for i in range(4)]
-    ba = [build_ether(96 + 7 * i, payload_seed=400 + i) for i in range(4)]
-    a2b = cocotb.start_soon(forward_check(dut, A_TO_B, ab,
-                                          throttle_prob=0.2, rng=random.Random(1)))
-    b2a = cocotb.start_soon(forward_check(dut, B_TO_A, ba,
-                                          throttle_prob=0.2, rng=random.Random(2)))
-    await Combine(a2b, b2a)
-
-
-@cocotb.test()
-async def test_fcs_is_recomputed(dut):
-    """Drive a frame with a deliberately bogus FCS and verify fcs_recalc
-    overwrites it with the correct CRC32. Covers each (length mod 4) so the
-    byte-straddling logic between the penultimate and final words gets
-    exercised at every alignment."""
-    await reset(dut)
-    src = bundle(dut, A_TO_B[0])
-    sink = bundle(dut, A_TO_B[1])
-    for size in (64, 65, 66, 67):
-        rng = random.Random(900 + size)
-        body = bytes(rng.randint(0, 255) for _ in range(size - 4))
-        bad_frame = body + b"\x00\x00\x00\x00"   # last 4 bytes are NOT the CRC
-        assert eth_fcs(body) != b"\x00\x00\x00\x00"
-        tx = cocotb.start_soon(drive_frame(dut, src, bad_frame))
-        rx = cocotb.start_soon(receive_frames(dut, sink, expected_frames=1))
-        await Combine(tx, rx)
-        got = rx.result()[0]
-        assert len(got) == size, f"size {size}: length changed ({len(got)} != {size})"
-        assert got[:-4] == body, f"size {size}: frame body was modified"
-        assert got[-4:] == eth_fcs(body), (
-            f"size {size}: FCS not recomputed; got {got[-4:].hex()} "
-            f"expected {eth_fcs(body).hex()}"
-        )
+    req = [payload(300 + i, 40 + 4 * i) for i in range(4)]
+    rsp = [payload(400 + i, 70 + 7 * i) for i in range(4)]
+    a = cocotb.start_soon(forward_check(dut, REQ, canonical_frames(REQ, req), req,
+                                        throttle_prob=0.2, rng=random.Random(1)))
+    b = cocotb.start_soon(forward_check(dut, RSP, canonical_frames(RSP, rsp), rsp,
+                                        throttle_prob=0.2, rng=random.Random(2)))
+    await Combine(a, b)
