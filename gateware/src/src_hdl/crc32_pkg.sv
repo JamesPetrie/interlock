@@ -1,250 +1,19 @@
-// fcs_recalc — strip the original Ethernet FCS from a CoreTSE MAC-FIFO
-// stream and append a freshly-computed CRC32 over the rest of the frame.
+// crc32_pkg — IEEE 802.3 / zlib CRC32 primitives, shared by the Ethernet-layer
+// blocks. Reflected, init 0xFFFFFFFF, final XOR 0xFFFFFFFF (matches
+// zlib.crc32).
 //
-// The CoreTSE MAC client interface delivers the MAC frame with preamble/SFD
-// already removed, so what arrives is:
-//     Dst MAC (6) | Src MAC (6) | Type/Length (2) | Data + Pad | FCS (4)
-// IEEE 802.3 defines the FCS as a CRC32 over every byte before it — Dst,
-// Src, Type/Length, and Data+Pad.
-//
-// Assumes the CoreTSE MAC is configured to deliver / accept frames *with*
-// FCS on the client (FIFO) interface — true at the IP's default. Also
-// assumes frames are >= 2 words (true for Ethernet, where min is 16 words).
-//
-// CRC32: see the in-module spec walkthrough at the polynomial localparam.
+// Usage (incremental, byte at a time):
+//   rem = 32'hFFFFFFFF;                 // init
+//   foreach byte b: rem = crc32_step(rem, b);
+//   crc = ~rem;                         // final value
 
+package crc32_pkg;
 
-module fcs_recalc (
-  input  wire        clk,
-  input  wire        rst_n,
+  localparam logic [31:0] CRC32_INIT = 32'hFFFFFFFF;
 
-  // Input — MAC-RX-shaped (source drives data, we drive accept)
-  input  wire        in_rdy,
-  output wire        in_acpt,
-  input  wire        in_sof,
-  input  wire        in_eof,
-  input  wire [31:0] in_dat,
-  input  wire [1:0]  in_bytevalid,
-
-  // Output — MAC-TX-shaped (we drive data, sink drives accept)
-  output wire        out_rdy,
-  input  wire        out_acpt,
-  output wire        out_sof,
-  output wire        out_eof,
-  output wire [31:0] out_dat,
-  output wire [1:0]  out_bytevalid
-);
-
-  // ----- BYTEVALID helpers -----
-  // BYTEVALID is the count of *invalid* bytes in a word (0..3, where 0 means
-  // all 4 lanes are valid).
-  function automatic logic [3:0] bv_to_strb (input logic [1:0] bv);
-    case (bv)
-      2'b00: bv_to_strb = 4'b1111;
-      2'b01: bv_to_strb = 4'b0111;
-      2'b10: bv_to_strb = 4'b0011;
-      2'b11: bv_to_strb = 4'b0001;
-    endcase
-  endfunction
-  function automatic logic [1:0] strb_to_bv (input logic [3:0] strb);
-    case (strb)
-      4'b1111: strb_to_bv = 2'd0;
-      4'b0111: strb_to_bv = 2'd1;
-      4'b0011: strb_to_bv = 2'd2;
-      4'b0001: strb_to_bv = 2'd3;
-      default: strb_to_bv = 2'd0; // (shouldn't happen)
-    endcase
-  endfunction
-
-  // CRC procedure c) - M(x) divided by G(x)
-  // Note: division is modulo 2!
-  function automatic logic [31:0] crc32_step (input logic [31:0] c, input logic [7:0] b);
-    // The CRC step uses a lookup table for better timing.
-    // Linearity of the CRC allows the effect of multiple bits to be precomputed,
-    // and then applied once. (Sarwate algorithm)
-    //
-    // M(x) is processed one byte at a time with G(x) baked into the lookup table.
-    // The CRC accumulator tracks the remainder throughout the process, and
-    // becomes the final R(x) after each byte is processed.
-    // Note: the multiply by x^32 part is naturally implemented by
-    //       the 32 CRC bits getting to track the 32 remainder bits
-    //       beyond the last processed bit of M(x).
-    return {8'h00, c[31:8]} ^ crc32_byte_calc(c[7:0] ^ b);
-  endfunction
-
-  function automatic logic [31:0] crc32_word (input logic [31:0] c,
-                                              input logic [31:0] d,
-                                              input logic [3:0] s);
-    logic [31:0] cc;
-    cc = c;
-    // fold valid bytes into the CRC (low lanes first; s is a per-lane strobe).
-    if (s[0]) cc = crc32_step(cc, d[7:0]);
-    if (s[1]) cc = crc32_step(cc, d[15:8]);
-    if (s[2]) cc = crc32_step(cc, d[23:16]);
-    if (s[3]) cc = crc32_step(cc, d[31:24]);
-    return cc;
-  endfunction
-
-  // Algorithm — single-word lookahead:
-  //   - Words W_0..W_{N-3} are passed through unchanged. The CRC32 unit
-  //     accumulates over their 4 bytes each (these are all body bytes).
-  //   - W_{N-2} is the "penultimate" input word; if data ends in the middle,
-  //     the remaining bytes are FCS.
-  //   - W_{N-1} (EOF) is dropped entirely; its bytes are all FCS.
-  //   - On the wire the new CRC goes back into exactly the byte positions the
-  //     old FCS occupied. Word N-2 ends up fully valid; word N-1
-  //     mirrors the input EOF word's BYTEVALID.
-  //
-  // Pipeline: arrival of W_k emits W_{k-1}, so output lags input by one beat.
-  // When EOF arrives, the buffered W_{N-2} is NOT emitted on that cycle (its
-  // high bytes have to be replaced by CRC, which isn't final until we fold in
-  // W_{N-2}'s payload bytes). Instead we use the two cycles after EOF
-  // (during the inter-frame gap) to emit the rewritten W_{N-2} and the new
-  // CRC tail word.
-
-  // ----- state -----
-  typedef enum logic [1:0] {
-    S_IDLE,      // waiting for SOF
-    S_STREAM,    // body of a frame; buf holds the most recently arrived word
-    S_EMIT_PEN,  // emit rewritten penultimate word
-    S_EMIT_LAST  // emit final word, EOF=1
-  } state_t;
-  state_t state;
-
-  // single-word lookahead buffer
-  logic [31:0] buf_dat;
-  logic        buf_sof;
-  // logic       buf_eof;  // EOF data is all FCS, so not stored, state tracks it implicitly
-  logic [31:0] crc;
-  logic [3:0]  eof_strb;   // byte strobe of the EOF word, derived from BYTEVALID (= output last word's strobe)
-
-  // registered outputs
-  logic        o_rdy, o_sof, o_eof;
-  logic [31:0] o_dat;
-  logic [1:0]  o_bv;
-  assign out_rdy       = o_rdy;
-  assign out_sof       = o_sof;
-  assign out_eof       = o_eof;
-  assign out_dat       = o_dat;
-  assign out_bytevalid = o_bv;
-
-  // CRC procedure e) - final XOR
-  // Final CRC after standard XOR (matches zlib.crc32 value).
-  wire [31:0] cf = ~crc;
-
-  // Rewritten penultimate output word: low lanes = buf payload tail,
-  // high lanes = first bytes of new CRC.
-  wire [31:0] pen_dat =
-      (eof_strb == 4'b1111) ?  buf_dat                                 :
-      (eof_strb == 4'b0111) ? {cf[7:0],   buf_dat[23:0]}               :
-      (eof_strb == 4'b0011) ? {cf[15:0],  buf_dat[15:0]}               :
-      (eof_strb == 4'b0001) ? {cf[23:0],  buf_dat[7:0]}                :
-                               32'h0;                                     // (shouldn't happen)
-
-  // Final output word: low nw lanes = remaining (nw) bytes of new CRC.
-  // High lanes are don't-care because BYTEVALID flags them invalid, but we
-  // pad with 0 to prevent covert data leak.
-  wire [31:0] last_dat =
-      (eof_strb == 4'b1111) ?  cf                                      :
-      (eof_strb == 4'b0111) ? {8'h0,  cf[31:8]}                        :
-      (eof_strb == 4'b0011) ? {16'h0, cf[31:16]}                       :
-      (eof_strb == 4'b0001) ? {24'h0, cf[31:24]}                       :
-                               32'h0;                                     // (shouldn't happen)
-
-  // Accept input when we can advance the pipeline. In IDLE we always accept;
-  // in STREAM we accept iff the previously emitted word has been taken
-  // (or we have nothing pending). In the drain states we don't accept.
-  assign in_acpt = (state == S_IDLE) ||
-                   (state == S_STREAM && (!o_rdy || out_acpt));
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      state    <= S_IDLE;
-      buf_dat  <= 32'h0;
-      buf_sof  <= 1'b0;
-      crc      <= 32'hFFFFFFFF;
-      eof_strb <= 4'b0000;
-      o_rdy    <= 1'b0;
-      o_sof    <= 1'b0;
-      o_eof    <= 1'b0;
-      o_dat    <= 32'h0;
-      o_bv     <= 2'h0;
-    end else begin
-      // Output-side handshake: clear valid as soon as the sink takes it,
-      // unless the state body writes a new value below.
-      // Also drive default values for SOF, EOF, and BYTEVALID so states overwrite only when needed.
-      if (o_rdy && out_acpt) begin
-        o_rdy <= 1'b0;
-        o_sof <= 1'b0;
-        o_eof <= 1'b0;
-        o_bv  <= 2'b00;
-      end
-
-      case (state)
-        S_IDLE: begin
-          // Latch the first word W_0 of a frame.
-          if (in_rdy && in_acpt && in_sof) begin
-            buf_dat <= in_dat;
-            buf_sof <= 1'b1;
-            crc     <= 32'hFFFFFFFF; // CRC procedure a) - init. accumulator == complement first bits
-            state   <= S_STREAM;
-            // (We don't emit yet — need to know if the next word is EOF.)
-          end
-        end
-
-        S_STREAM: begin
-          // On arrival of W_k (with k >= 1):
-          //   - fold W_{k-1}'s valid bytes from the buffer into CRC.
-          //   - if W_k is not EOF, emit W_{k-1} as a regular word and load W_k into the buffer.
-          //   - else (W_N-1), don't emit the buffered data yet, wait for CRC result.
-
-          if (in_rdy && in_acpt) begin
-
-            // CRC procedure b) - treat the payload as a polynomial and process word-by-word.
-            // Note: CRC is calculated on the previously buffered word!
-            //       The number of body bytes in the penultimate word (W_{N-2}) is determined
-            //       by the next (EOF) word's BYTEVALID, so while we pass the buffered data,
-            //       BYTEVALID is used directly from the input.
-            crc <= crc32_word(crc, buf_dat, in_eof ? bv_to_strb(in_bytevalid) : 4'b1111);
-
-            if (~in_eof) begin
-              o_rdy   <= 1'b1;
-              o_dat   <= buf_dat;
-              o_sof   <= buf_sof;
-              buf_dat <= in_dat;
-              buf_sof <= 1'b0;     // ignore midframe SOF (should not happen)
-            end else begin
-              eof_strb <= bv_to_strb(in_bytevalid);
-              // CRC procedure d) - after folding in the last body byte, the accumulator holds R(x).
-              state <= S_EMIT_PEN;
-              // Do NOT load in_dat (it's all FCS) and do NOT emit this cycle.
-            end
-          end
-        end
-
-        S_EMIT_PEN: begin
-          if (!o_rdy || out_acpt) begin
-            o_rdy <= 1'b1;
-            o_dat <= pen_dat;
-            state <= S_EMIT_LAST;
-          end
-        end
-
-        S_EMIT_LAST: begin
-          if (!o_rdy || out_acpt) begin
-            o_rdy <= 1'b1;
-            o_eof <= 1'b1;
-            o_dat <= last_dat;
-            o_bv  <= strb_to_bv(eof_strb);
-            state <= S_IDLE;
-          end
-        end
-      endcase
-    end
-  end
-
+  // Single-byte CRC32 contribution (Sarwate table).
   // Generated using https://github.com/pavona/pavona/blob/main/hw/ip/prim/rtl/prim_crc32.sv
-  function automatic logic [31:0] crc32_byte_calc(logic [7:0] b);
+  function automatic logic [31:0] crc32_byte_calc(input logic [7:0] b);
     unique case (b)
       8'h00:   crc32_byte_calc = 32'h00000000;
       8'h01:   crc32_byte_calc = 32'h77073096;
@@ -506,5 +275,13 @@ module fcs_recalc (
     endcase
   endfunction
 
+  // Fold one message byte into the running CRC.
+  function automatic logic [31:0] crc32_step(input logic [31:0] rem, input logic [7:0] b);
+    return {8'h00, rem[31:8]} ^ crc32_byte_calc(rem[7:0] ^ b);
+  endfunction
 
-endmodule
+  function automatic logic [31:0] crc32_final(input logic [31:0] rem);
+    return ~rem;
+  endfunction
+
+endpackage : crc32_pkg
