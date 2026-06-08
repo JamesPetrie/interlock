@@ -68,10 +68,17 @@ module eth_deframe (
   eth_hdr_bytes_t             hdr_bytes;  // header shift register, [k] = wire byte k
   logic [8*RESIDUE_BYTES-1:0] residue;    // DATA tail bytes of the previous beat
   len_t                       sent_bytes; // DATA bytes emitted so far
+  len_t                       eth_len_q;  // LENGTH captured directly off the wire
 
-  // Parsed header view of the shift register (valid once word 3 has shifted in).
+  // Parsed header view of the shift register (dst/src — debug outputs only).
   wire eth_header_t eth_hdr = eth_hdr_from_bytes(hdr_bytes);
-  wire len_t        eth_len = eth_hdr.len_type;
+  // LENGTH is captured directly (see always_ff) as an explicit bit-slice of the
+  // wire, NOT via eth_hdr_from_bytes. The struct-cast / byte-reverse extraction
+  // simulated correctly (all cocotb + ModelSim) yet produced a wrong LENGTH on
+  // the MPF300 silicon — proven by hardware bisection: hardcoding reframe's
+  // length made the bridge forward, so the extracted dbg_eth_len was the fault.
+  // A plain registered bit-slice carries no synth-vs-sim ambiguity.
+  wire len_t        eth_len = eth_len_q;
 
   // AXI-Stream output register (declared before the accept logic uses it)
   logic        tvalid_r;
@@ -117,6 +124,7 @@ module eth_deframe (
       hdr_bytes     <= '0;
       residue       <= '0;
       sent_bytes    <= '0;
+      eth_len_q     <= '0;
       tvalid_r    <= 1'b0;
       tlast_r     <= 1'b0;
       tdata_r     <= '0;
@@ -142,6 +150,10 @@ module eth_deframe (
         end else if (rx_widx == HDR_FULL_WORDS) begin
           // partial last header word: keep all but the low RESIDUE_BYTES bytes
           {residue, hdr_bytes}  <= {in_dat, hdr_bytes[ETH_HDR_BYTES*8-1:8*RESIDUE_BYTES]};
+          // LENGTH = wire bytes 12,13 (big-endian). This last header word carries
+          // wire bytes 12..15; the MAC delivers wire byte N in in_dat[8*N +: 8],
+          // so byte12 = in_dat[7:0] (MSB), byte13 = in_dat[15:8] (LSB).
+          eth_len_q  <= {in_dat[7:0], in_dat[15:8]};
           sent_bytes <= '0;
         end
 
