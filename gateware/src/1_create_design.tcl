@@ -11,6 +11,7 @@ import_files -hdl_source {./src/src_hdl/eth_pkg.sv}
 import_files -hdl_source {./src/src_hdl/crc32_pkg.sv}
 import_files -hdl_source {./src/src_hdl/eth_deframe.sv}
 import_files -hdl_source {./src/src_hdl/eth_reframe.sv}
+import_files -hdl_source {./src/src_hdl/dbg_apb.sv}
 
 
 build_design_hierarchy 

@@ -35,7 +35,16 @@ module eth_reframe #(
   output wire        out_sof,
   output wire        out_eof,
   output wire [31:0] out_dat,
-  output wire [1:0]  out_bytevalid
+  output wire [1:0]  out_bytevalid,
+
+  // ---- debug taps (live snapshots for APB/UART readback; see dbg_apb) ----
+  output wire [2:0]  dbg_state,     // FSM state (F_IDLE..F_EMIT_LAST)
+  output wire [15:0] dbg_data_end,  // HDR+L (latched at SOF)
+  output wire [15:0] dbg_pad_end,   // HDR+L+PAD (latched at SOF)
+  output wire [15:0] dbg_sent,      // bytes emitted so far
+  output wire [15:0] dbg_fed,       // bytes appended so far
+  output wire        dbg_o_rdy,     // driving a word to the MAC
+  output wire        dbg_o_eof      // emitting the last word
 );
 
   import eth_pkg::*;
@@ -88,6 +97,15 @@ module eth_reframe #(
   assign out_eof       = o_eof;
   assign out_dat       = o_dat;
   assign out_bytevalid = o_bv;
+
+  // debug taps
+  assign dbg_state    = 3'(state);
+  assign dbg_data_end = data_end;
+  assign dbg_pad_end  = pad_end;
+  assign dbg_sent     = sent;
+  assign dbg_fed      = fed;
+  assign dbg_o_rdy    = o_rdy;
+  assign dbg_o_eof    = o_eof;
 
   wire out_handshake = o_rdy && out_acpt;
   wire out_free      = !o_rdy || out_acpt;

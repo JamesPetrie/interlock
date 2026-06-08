@@ -297,6 +297,9 @@ sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {tse1_loopback} -
 # fabric_bridge — routes BOTH MAC directions through the fabric.
 sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {fabric_bridge} -hdl_file {hdl\fabric_bridge.sv} -instance_name {fabric_bridge_0}
 
+# dbg_apb — read-only APB slave exposing fabric debug taps to the Mi-V (CoreAPB3 slot 4 = 0x60004000)
+sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {dbg_apb} -hdl_file {hdl\dbg_apb.sv} -instance_name {dbg_apb_0}
+
 
 
 # =========================================================================
@@ -306,7 +309,7 @@ sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {fabric_bridge} -
 # =========================== Shared / common ============================
 sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:A" "CORESPI_0_0:PRESETN" "CoreUARTapb_0:PRESETN" "Core_reset_pf_0:FABRIC_RESET_N" "MIV_RV32_C0_0:RESETN" "PF_IOD_CDR_CCC_C0_0:ARST_N" "PHY_RST" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:B" "PF_IOD_CDR_CCC_C0_0:PLL_LOCK" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:Y" "CORETSE_0:PRESETN" "CORETSE_1:PRESETN" "PF_IOD_CDR_C0_0:RST_N" "PF_IOD_CDR_C1_0:RST_N" "SSDetect_0:rst_b" "SSDetect_1:rst_b" "pkt_counter_0:rst_n" "pkt_counter_1:rst_n" "sticky_bit_0:rst_n" "fabric_bridge_0:rst_n" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:Y" "CORETSE_0:PRESETN" "CORETSE_1:PRESETN" "PF_IOD_CDR_C0_0:RST_N" "PF_IOD_CDR_C1_0:RST_N" "SSDetect_0:rst_b" "SSDetect_1:rst_b" "pkt_counter_0:rst_n" "pkt_counter_1:rst_n" "sticky_bit_0:rst_n" "fabric_bridge_0:rst_n" "dbg_apb_0:PRESETN" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TCK" "TCK" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TDI" "TDI" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TDO" "TDO" }
@@ -317,7 +320,7 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TGT_TMS_0" "
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TGT_TRSTN_0" "MIV_RV32_C0_0:JTAG_TRSTN" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TMS" "TMS" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TRSTB" "TRSTB" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:PCLK" "CORETSE_0:MRXCLK" "CORETSE_0:MTXCLK" "CORETSE_0:PCLK" "CORETSE_1:MRXCLK" "CORETSE_1:MTXCLK" "CORETSE_1:PCLK" "CoreUARTapb_0:PCLK" "Core_reset_pf_0:CLK" "MIV_RV32_C0_0:CLK" "PF_CCC_0_0:OUT0_FABCLK_0" "SSDetect_0:rck" "SSDetect_1:rck" "pkt_counter_0:clk" "pkt_counter_1:clk" "sticky_bit_0:clk" "fabric_bridge_0:clk" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:PCLK" "CORETSE_0:MRXCLK" "CORETSE_0:MTXCLK" "CORETSE_0:PCLK" "CORETSE_1:MRXCLK" "CORETSE_1:MTXCLK" "CORETSE_1:PCLK" "CoreUARTapb_0:PCLK" "Core_reset_pf_0:CLK" "MIV_RV32_C0_0:CLK" "PF_CCC_0_0:OUT0_FABCLK_0" "SSDetect_0:rck" "SSDetect_1:rck" "pkt_counter_0:clk" "pkt_counter_1:clk" "sticky_bit_0:clk" "fabric_bridge_0:clk" "dbg_apb_0:PCLK" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISCLKO" "SPISCLKO" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISDI" "SPISDI" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISDO" "SPISDO" }
@@ -338,6 +341,25 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_CCC_0_0:REF_CLK_0" "REF_CLK_
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:APB_bif" "CoreAPB3_0_0:APBmslave2" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:APB3mmaster" "MIV_RV32_C0_0:APB_MSTR" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:APBmslave1" "CoreUARTapb_0:APB_bif" }
+
+# --- dbg_apb on CoreAPB3 slot 4 (0x60004000): shared addr/ctrl + slot-4 select/rdata/ready/err ---
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PADDRS"    "dbg_apb_0:PADDR" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PWDATAS"   "dbg_apb_0:PWDATA" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PENABLES"  "dbg_apb_0:PENABLE" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PWRITES"   "dbg_apb_0:PWRITE" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PSELS4"    "dbg_apb_0:PSEL" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PRDATAS4"  "dbg_apb_0:PRDATA" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PREADYS4"  "dbg_apb_0:PREADY" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CoreAPB3_0_0:PSLVERRS4" "dbg_apb_0:PSLVERR" }
+# debug taps: fabric_bridge request-path signals -> dbg_apb inputs
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_state"    "dbg_apb_0:rf_state" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_data_end" "dbg_apb_0:rf_data_end" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_pad_end"  "dbg_apb_0:rf_pad_end" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_sent"     "dbg_apb_0:rf_sent" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_fed"      "dbg_apb_0:rf_fed" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_o_rdy"    "dbg_apb_0:rf_o_rdy" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_o_eof"    "dbg_apb_0:rf_o_eof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_tvalid"   "dbg_apb_0:df_tvalid" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_IOD_CDR_C0_0:CDR_CLOCKS" "PF_IOD_CDR_C1_0:CDR_CLOCKS" "PF_IOD_CDR_CCC_C0_0:CDR_CLOCKS" }
 
 # ============= Port 0  (Mac side: CORETSE_0 / PF_IOD_CDR_C0 / SSDetect_0) ===

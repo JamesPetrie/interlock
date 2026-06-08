@@ -1032,5 +1032,25 @@ int main(void)
         uart_print("\r\n");
         dump_mac_stats(TSE_BASEADDR,  "P0");
         dump_mac_stats(TSE1_BASEADDR, "P1");
+
+        /* fabric debug readback (dbg_apb @ CoreAPB3 slot 4 = 0x60004000):
+         * request-path reframe geometry/state + deframe valid + completed-frame
+         * count. Lets us see on silicon where reframe stalls with a variable
+         * LENGTH (the variable-tuser bug). reg0={fed,data_end} reg1={sent,pad_end}
+         * reg2=flags+state reg3=completed-frame count. */
+        uint32_t d0 = mac_rd(0x60004000, 0x00);
+        uint32_t d1 = mac_rd(0x60004000, 0x04);
+        uint32_t d2 = mac_rd(0x60004000, 0x08);
+        uint32_t d3 = mac_rd(0x60004000, 0x0C);
+        uart_print("[dbg] data_end=");  uart_print_hex16((uint16_t)d0);
+        uart_print(" fed=");            uart_print_hex16((uint16_t)(d0 >> 16));
+        uart_print(" pad_end=");        uart_print_hex16((uint16_t)d1);
+        uart_print(" sent=");           uart_print_hex16((uint16_t)(d1 >> 16));
+        uart_print(" state=");          uart_print_dec(d2 & 0x7);
+        uart_print(" oRdy=");           uart_print_dec((d2 >> 3) & 1);
+        uart_print(" oEof=");           uart_print_dec((d2 >> 4) & 1);
+        uart_print(" dfTvld=");         uart_print_dec((d2 >> 5) & 1);
+        uart_print(" frames=");         uart_print_hex32(d3);
+        uart_print("\r\n");
     }
 }

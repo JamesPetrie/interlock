@@ -59,7 +59,17 @@ module fabric_bridge (
   output wire        tse1_mtx_sof,
   output wire        tse1_mtx_eof,
   output wire [31:0] tse1_mtx_dat,
-  output wire [1:0]  tse1_mtx_bytevalid
+  output wire [1:0]  tse1_mtx_bytevalid,
+
+  // ---- debug taps for dbg_apb (request path: CORETSE_0 -> CORETSE_1) ----
+  output wire [2:0]  dbg_rf_state,
+  output wire [15:0] dbg_rf_data_end,
+  output wire [15:0] dbg_rf_pad_end,
+  output wire [15:0] dbg_rf_sent,
+  output wire [15:0] dbg_rf_fed,
+  output wire        dbg_rf_o_rdy,
+  output wire        dbg_rf_o_eof,
+  output wire        dbg_df_tvalid
 );
 
   // Each direction is sanitized at the Ethernet layer:
@@ -128,8 +138,18 @@ module fabric_bridge (
     .out_sof       (tse1_mtx_sof),
     .out_eof       (tse1_mtx_eof),
     .out_dat       (tse1_mtx_dat),
-    .out_bytevalid (tse1_mtx_bytevalid)
+    .out_bytevalid (tse1_mtx_bytevalid),
+    .dbg_state     (dbg_rf_state),
+    .dbg_data_end  (dbg_rf_data_end),
+    .dbg_pad_end   (dbg_rf_pad_end),
+    .dbg_sent      (dbg_rf_sent),
+    .dbg_fed       (dbg_rf_fed),
+    .dbg_o_rdy     (dbg_rf_o_rdy),
+    .dbg_o_eof     (dbg_rf_o_eof)
   );
+
+  // deframe_req's AXI-valid: does the ingress deframer ever produce output?
+  assign dbg_df_tvalid = req_tvalid;
 
   // ====================================================================
   // Responses: CORETSE_1 MAC-RX -> deframe/reframe -> CORETSE_0 MAC-TX
