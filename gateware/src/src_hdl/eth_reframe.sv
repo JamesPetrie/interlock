@@ -68,6 +68,10 @@ module eth_reframe #(
   // ------------------------------------------------------------------
   len_t data_end;      // HDR + L
   len_t pad_end;       // HDR + L + PAD
+  len_t tuser_q;       // tuser registered LOCALLY (clean reg->reg into data_end/pad_end;
+                       // removes the deframe->reframe cross-module combinational path that
+                       // fed the geometry flops directly — the prime suspect for the
+                       // garbage LENGTH latched on silicon)
 
   // ------------------------------------------------------------------
   // Byte shift register, input and output in lock-step
@@ -168,12 +172,17 @@ module eth_reframe #(
       crc_rem  <= CRC32_INIT;
       data_end <= '0;
       pad_end  <= '0;
+      tuser_q  <= '0;
       o_rdy    <= 1'b0;
       o_sof    <= 1'b0;
       o_eof    <= 1'b0;
       o_dat    <= '0;
       o_bv     <= 2'b00;
     end else begin
+      // register the cross-module length locally every cycle (stable well before
+      // reframe leaves F_IDLE, so == tuser at the SOF edge but with clean timing)
+      tuser_q <= tuser;
+
       if (out_handshake) begin
         o_rdy <= 1'b0;
         o_sof <= 1'b0;
@@ -189,8 +198,8 @@ module eth_reframe #(
             fed      <= len_t'(ETH_HDR_BYTES);
             sent     <= '0;
             crc_rem  <= CRC32_INIT;
-            data_end <= ETH_HDR_BYTES + tuser;
-            pad_end  <= ETH_HDR_BYTES + tuser + pad_len(tuser);
+            data_end <= ETH_HDR_BYTES + tuser_q;
+            pad_end  <= ETH_HDR_BYTES + tuser_q + pad_len(tuser_q);
             state    <= F_RUN;
           end
         end

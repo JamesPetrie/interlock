@@ -69,7 +69,8 @@ module fabric_bridge (
   output wire [15:0] dbg_rf_fed,
   output wire        dbg_rf_o_rdy,
   output wire        dbg_rf_o_eof,
-  output wire        dbg_df_tvalid
+  output wire        dbg_df_tvalid,
+  output wire [15:0] dbg_df_eth_len   // raw LENGTH deframe extracted (req_len) — vs reframe's data_end
 );
 
   // Each direction is sanitized at the Ethernet layer:
@@ -149,7 +150,10 @@ module fabric_bridge (
   );
 
   // deframe_req's AXI-valid: does the ingress deframer ever produce output?
-  assign dbg_df_tvalid = req_tvalid;
+  assign dbg_df_tvalid  = req_tvalid;
+  // deframe_req's extracted LENGTH (eth_len_q). Compare to reframe's data_end-14:
+  // equal -> deframe capture is the fault; different -> reframe sampled wrong.
+  assign dbg_df_eth_len = req_len;
 
   // ====================================================================
   // Responses: CORETSE_1 MAC-RX -> deframe/reframe -> CORETSE_0 MAC-TX

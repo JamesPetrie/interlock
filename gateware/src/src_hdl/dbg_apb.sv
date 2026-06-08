@@ -34,7 +34,8 @@ module dbg_apb (
   input  wire [15:0] rf_fed,
   input  wire        rf_o_rdy,
   input  wire        rf_o_eof,
-  input  wire        df_tvalid
+  input  wire        df_tvalid,
+  input  wire [15:0] df_eth_len   // raw LENGTH deframe extracted (= req_len)
 );
 
   assign PREADY  = 1'b1;   // zero wait states
@@ -56,13 +57,14 @@ module dbg_apb (
 
   // read mux (word select = PADDR[3:2]); via an explicit wire to avoid any
   // part-select-in-process ambiguity (the very class of bug this channel hunts).
-  wire [1:0] wsel = PADDR[3:2];
+  wire [2:0] wsel = PADDR[4:2];
   always_comb begin
     case (wsel)
-      2'd0:    PRDATA = {rf_fed,  rf_data_end};
-      2'd1:    PRDATA = {rf_sent, rf_pad_end};
-      2'd2:    PRDATA = {26'h0, df_tvalid, rf_o_eof, rf_o_rdy, rf_state};  // [5]=dfTvld [4]=oEof [3]=oRdy [2:0]=state
-      2'd3:    PRDATA = frame_count;
+      3'd0:    PRDATA = {rf_fed,  rf_data_end};
+      3'd1:    PRDATA = {rf_sent, rf_pad_end};
+      3'd2:    PRDATA = {26'h0, df_tvalid, rf_o_eof, rf_o_rdy, rf_state};  // [5]=dfTvld [4]=oEof [3]=oRdy [2:0]=state
+      3'd3:    PRDATA = frame_count;
+      3'd4:    PRDATA = {16'h0, df_eth_len};  // 0x10: raw deframe LENGTH (req_len)
       default: PRDATA = 32'hDEAD_0000;
     endcase
   end

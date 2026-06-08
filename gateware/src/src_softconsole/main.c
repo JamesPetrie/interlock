@@ -1042,7 +1042,9 @@ int main(void)
         uint32_t d1 = mac_rd(0x60004000, 0x04);
         uint32_t d2 = mac_rd(0x60004000, 0x08);
         uint32_t d3 = mac_rd(0x60004000, 0x0C);
-        uart_print("[dbg] data_end=");  uart_print_hex16((uint16_t)d0);
+        uint32_t d4 = mac_rd(0x60004000, 0x10);   /* raw deframe LENGTH (req_len) */
+        uart_print("[dbg] dfLen=");     uart_print_hex16((uint16_t)d4);
+        uart_print(" data_end=");       uart_print_hex16((uint16_t)d0);
         uart_print(" fed=");            uart_print_hex16((uint16_t)(d0 >> 16));
         uart_print(" pad_end=");        uart_print_hex16((uint16_t)d1);
         uart_print(" sent=");           uart_print_hex16((uint16_t)(d1 >> 16));
