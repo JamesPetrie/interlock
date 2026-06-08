@@ -122,7 +122,13 @@ module fabric_bridge (
     .tdata         (req_tdata),
     .tkeep         (req_tkeep),
     .tlast         (req_tlast),
-    .tuser         (req_len),
+    // DIAGNOSTIC BISECTION: hardcode the frame LENGTH instead of using deframe's
+    // extracted dbg_eth_len (req_len). The loop_test frames carry Ethernet
+    // LENGTH=83. If the bridge now forwards, the bug is in deframe's length
+    // extraction (header parse / struct cast) on silicon. If it still forwards
+    // nothing, the length value is NOT the problem -> look downstream (reframe
+    // state/CRC/handshake) or at timing. Revert to .tuser(req_len) afterward.
+    .tuser         (16'd83),
     .out_rdy       (tse1_mtx_rdy),
     .out_acpt      (tse1_mtx_acpt),
     .out_sof       (tse1_mtx_sof),
@@ -171,7 +177,8 @@ module fabric_bridge (
     .tdata         (rsp_tdata),
     .tkeep         (rsp_tkeep),
     .tlast         (rsp_tlast),
-    .tuser         (rsp_len),
+    // DIAGNOSTIC BISECTION: hardcoded LENGTH=83 (see request path above).
+    .tuser         (16'd83),
     .out_rdy       (tse0_mtx_rdy),
     .out_acpt      (tse0_mtx_acpt),
     .out_sof       (tse0_mtx_sof),
