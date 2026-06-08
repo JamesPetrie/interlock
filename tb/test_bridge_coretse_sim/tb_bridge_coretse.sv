@@ -19,7 +19,7 @@ module tb_bridge_coretse;
   // Client side (MTX/MRX) and the bridge share one fabric clock, as on HW
   // (top.tcl line 320: all M*CLK + fabric_bridge:clk on OUT0_FABCLK_0).
   reg fabclk=0, txc=0, rxc=0, tbitx=0, tbirx=0, pclk=0;
-  always #4 fabclk <= ~fabclk;   // 125 MHz client/bridge clock
+  always #6 fabclk <= ~fabclk;    // ~83 MHz client/bridge clock (HW OUT0_FABCLK_0 is 80 MHz; line stays 125)
   always #4 txc    <= ~txc;
   always #4 rxc    <= ~rxc;
   always #4 tbitx  <= ~tbitx;
@@ -116,7 +116,7 @@ module tb_bridge_coretse;
   end endtask
 
   task cfg_b; begin
-    `APBW(b_,8'h00,32'h00000005) `APBW(b_,8'h01,32'h00007203) `APBW(b_,8'h02,32'h40605060)
+    `APBW(b_,8'h00,32'h00000005) `APBW(b_,8'h01,32'h00007201) `APBW(b_,8'h02,32'h40605060)
     `APBW(b_,8'h03,32'h00a1f037) `APBW(b_,8'h04,32'h00000600) `APBW(b_,8'h10,32'hA5A4A3A2)
     `APBW(b_,8'h11,32'hA1A00000) `APBW(b_,8'h12,32'h0000FF00) `APBW(b_,8'h14,32'h0AAA0555)
     `APBW(b_,8'h08,32'h00000007)
