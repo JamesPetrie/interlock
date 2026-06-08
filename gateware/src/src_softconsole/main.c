@@ -99,6 +99,47 @@ static void uart_print_dec(uint32_t v)
     uart_print(&buf[i + 1]);
 }
 
+/*--------------------------- MAC register diagnostics -----------------------*/
+/* Raw APB read of a CoreTSE MAC register. base = TSE_BASEADDR / TSE1_BASEADDR */
+static uint32_t mac_rd(uint32_t base, uint32_t off)
+{
+    return *(volatile uint32_t *)(base + off);
+}
+
+/* Config readback — verify the MAC is set up as expected.
+ * CFG1(0x00): b0 TX_EN, b1 SYNC_TX, b2 RX_EN, b3 SYNC_RX, b8 LOOPBACK, b31 SOFT_RST
+ * CFG2(0x04): b0 FDX, b1 CRC_EN(append FCS), b2 PAD/CRC, b8:9 iface mode */
+static void dump_mac_cfg(uint32_t base, const char *label)
+{
+    uart_print("[maccfg] "); uart_print(label);
+    uart_print(" CFG1="); uart_print_hex32(mac_rd(base, 0x00));
+    uart_print(" CFG2="); uart_print_hex32(mac_rd(base, 0x04));
+    uart_print(" IPG="); uart_print_hex32(mac_rd(base, 0x08));
+    uart_print(" MAXFR="); uart_print_hex32(mac_rd(base, 0x10));
+    uart_print(" FIFO0(48)="); uart_print_hex32(mac_rd(base, 0x48));
+    uart_print(" FIFO2(50)="); uart_print_hex32(mac_rd(base, 0x50));
+    uart_print(" FIFO5(5C)="); uart_print_hex32(mac_rd(base, 0x5C));
+    uart_print("\r\n");
+}
+
+/* RMON statistics dump (0x80..0x17C). Prints only NONZERO regs as off=val so
+ * we can spot which counters grow while streaming (RX pkt count on the ingress
+ * MAC, TX pkt count on the egress MAC, plus error counters: FCS/align/overflow/
+ * undersize/fragment/drop on RX, and underrun/drop on TX). Counters that move
+ * when frames flow localize exactly where the bridge stalls. */
+static void dump_mac_stats(uint32_t base, const char *label)
+{
+    uart_print("[macstat] "); uart_print(label); uart_print(":");
+    for (uint32_t off = 0x80; off <= 0x17C; off += 4) {
+        uint32_t v = mac_rd(base, off);
+        if (v != 0u) {
+            uart_print(" "); uart_print_hex16((uint16_t)off);
+            uart_print("="); uart_print_hex32(v);
+        }
+    }
+    uart_print("\r\n");
+}
+
 /*--------------------------- MDIO helpers -----------------------------------*/
 
 static inline uint16_t mdio_addr(uint8_t phy, uint8_t reg)
@@ -950,6 +991,10 @@ int main(void)
 
     uart_print("[boot] init complete — polling both ports\r\n");
 
+    /* One-time MAC config readback for both ports (verify TX/RX enable, CRC, FIFO). */
+    dump_mac_cfg(TSE_BASEADDR,  "CORETSE_0 (port0)");
+    dump_mac_cfg(TSE1_BASEADDR, "CORETSE_1 (port1)");
+
     uint32_t tick = 0;
     while (1) {
         for (volatile uint32_t i = 0; i < 8000000; i++) { }
@@ -974,5 +1019,18 @@ int main(void)
         uart_print_dec((s1c >> 2) & 1);
         uart_print_dec((s1s >> 2) & 1);
         uart_print(")\r\n");
+
+        /* MAC-level frame counters + errors (the reliable signal). For the
+         * bridge request path (port0 RX -> port1 TX): watch CORETSE_0 RX pkt
+         * count rise (frames reach ingress MAC) and CORETSE_1 TX pkt count
+         * (does the bridge feed the egress MAC?). Re-print CFG1/CFG2 each poll
+         * in case anything changes them. */
+        uart_print("[cfg] p0 CFG1=");  uart_print_hex32(mac_rd(TSE_BASEADDR,0x00));
+        uart_print(" CFG2=");          uart_print_hex32(mac_rd(TSE_BASEADDR,0x04));
+        uart_print(" | p1 CFG1=");     uart_print_hex32(mac_rd(TSE1_BASEADDR,0x00));
+        uart_print(" CFG2=");          uart_print_hex32(mac_rd(TSE1_BASEADDR,0x04));
+        uart_print("\r\n");
+        dump_mac_stats(TSE_BASEADDR,  "P0");
+        dump_mac_stats(TSE1_BASEADDR, "P1");
     }
 }
