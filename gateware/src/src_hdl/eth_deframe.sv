@@ -137,9 +137,11 @@ module eth_deframe (
         // ---- header capture: shift words in; after the partial last header
         // word, hdr_bytes[k] = wire byte k ----
         if (rx_widx <= HDR_FULL_WORDS-1) begin
-          hdr_bytes <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:4]};
+          // flat byte-shift: drop the low 4 bytes (32 b), shift the new word in at the top
+          hdr_bytes <= {in_dat, hdr_bytes[ETH_HDR_BYTES*8-1:32]};
         end else if (rx_widx == HDR_FULL_WORDS) begin
-          {residue, hdr_bytes}  <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:RESIDUE_BYTES]};
+          // partial last header word: keep all but the low RESIDUE_BYTES bytes
+          {residue, hdr_bytes}  <= {in_dat, hdr_bytes[ETH_HDR_BYTES*8-1:8*RESIDUE_BYTES]};
           sent_bytes <= '0;
         end
 
