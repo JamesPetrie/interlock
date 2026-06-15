@@ -36,12 +36,12 @@ module sha256_stream(
     reg          finl;       // latched fin request
 
     reg          core_init, core_next;
-    wire         core_ready;
+    wire         core_ready, core_dvalid;
     wire [255:0] core_digest;
 
     sha256_core core(.clk(clk), .reset_n(reset_n), .init(core_init), .next(core_next),
                      .mode(1'b1), .block(blk), .ready(core_ready),
-                     .digest(core_digest), .digest_valid());
+                     .digest(core_digest), .digest_valid(core_dvalid));  // dvalid unused; we track done
 
     assign in_ready = (state == ABSORB) && (cnt != 7'd64);
     assign done     = (state == DONE);

@@ -43,6 +43,7 @@ module interlock_core #(
     localparam [63:0] VERSION = 64'h696c6f636b2d7635;   // "ilock-v5"
     localparam [63:0] IID_W = IID;
     localparam [31:0] N_W   = N;
+    localparam [63:0] N64   = N;
 
     localparam BOOT=0, IDLE=1, FOLD=2, DROP=3,
                B_FIN=4, B_WAIT=5, B_FOLD=6, B_REINIT=7, B_DONE=8,
@@ -180,7 +181,7 @@ module interlock_core #(
                 end
                 B_DONE: begin
                     bucket<=bucket+1; used_in<=0; used_out<=0; have_out<=0; last_out_id<=0;
-                    if (nb+1==N_W) begin bstart<=bucket+1-N_W; state<=C_FIN_IN; end
+                    if (nb+1==N_W) begin bstart<=bucket+64'd1-N64; state<=C_FIN_IN; end
                     else begin nb<=nb+1; state<=IDLE; end
                 end
 
