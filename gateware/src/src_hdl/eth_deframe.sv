@@ -35,7 +35,7 @@ module eth_deframe (
   output wire [31:0] tdata,
   output wire [3:0]  tkeep,
   output wire        tlast,
-  output wire        tuser,
+  output wire        tuser, // truncated frame
 
   // Status / debug — live view of the header shift register: the fields are
   // valid from dbg_hdr_valid (header fully shifted in, before the first data
@@ -59,15 +59,20 @@ module eth_deframe (
   typedef logic [WIDX_W-1:0] widx_t;
   typedef logic [LEN_W-1:0]  len_t;
 
+  function automatic logic[3:0] bv2keep(input logic [1:0] bv);
+    return 4'b1111 >> bv;
+  endfunction
+
   // ------------------------------------------------------------------
   // RX word index / header capture
   // ------------------------------------------------------------------
   widx_t       rx_widx;                              // wire-word index in frame
   logic        in_frame;                             // inside SOF..EOF: words sampled
 
-  eth_hdr_bytes_t             hdr_bytes;  // header shift register, [k] = wire byte k
-  logic [8*RESIDUE_BYTES-1:0] residue;    // DATA tail bytes of the previous beat
-  len_t                       sent_bytes; // DATA bytes emitted so far
+  eth_hdr_bytes_t             hdr_bytes;    // header shift register, [k] = wire byte k
+  logic [8*RESIDUE_BYTES-1:0] residue;      // DATA tail bytes of the previous beat
+  logic [RESIDUE_BYTES-1:0]   residue_keep; // keep bits for `residue`
+  len_t                       beat_idx;     // data beat index to be emitted next
 
   // Parsed header view of the shift register (valid once word 3 has shifted in).
   wire eth_header_t eth_hdr = eth_hdr_from_bytes(hdr_bytes);
@@ -79,6 +84,7 @@ module eth_deframe (
   logic [3:0]  tkeep_r;
   logic        tlast_r;
   logic        tuser_r;
+
   assign tvalid = tvalid_r;
   assign tdata  = tdata_r;
   assign tkeep  = tkeep_r;
@@ -86,14 +92,19 @@ module eth_deframe (
   assign tuser  = tuser_r;
 
   wire len_t  beats_total    = (eth_len + 16'd3) >> 2;                 // ceil(LEN/4)
-  wire len_t  beat_idx       = sent_bytes >> 2;
-  wire        data_active    = (rx_widx >= HDR_FULL_WORDS + 1);
-  wire        data_remaining = (sent_bytes < eth_len) && (eth_len != '0);
-  wire        is_last        = (beat_idx + 1'b1 == beats_total);
-  wire [3:0]  last_keep      = (eth_len[1:0] == 2'd0) ? 4'b1111
-                             : (eth_len[1:0] == 2'd1) ? 4'b0001
-                             : (eth_len[1:0] == 2'd2) ? 4'b0011
-                             :                          4'b0111;
+  wire        data_active    = (int'(rx_widx) >= HDR_FULL_WORDS + 1);
+  wire        beat_remaining = (beat_idx != beats_total);
+  wire        is_last        = (beat_idx == beats_total - 1'b1);
+
+  // On the last beat, drop anything past LENGTH.
+  wire [3:0] keep_mask = !is_last             ? 4'b1111
+                       : eth_len[1:0] == 2'd1 ? 4'b0001
+                       : eth_len[1:0] == 2'd2 ? 4'b0011
+                       : eth_len[1:0] == 2'd3 ? 4'b0111
+                       :                        4'b1111;
+  // Extend the mask for the residue bytes,
+  // residue does not need masking (set to 1)
+  wire [RESIDUE_BYTES+3:0] keep_mask_ext = { {RESIDUE_BYTES{1'b1}}, keep_mask };
 
   // Debug = combinational view of the held header register.
   assign dbg_hdr_valid = data_active;
@@ -105,7 +116,7 @@ module eth_deframe (
   wire frame_word = in_frame || in_sof;
 
   // Accept whenever the word doesn't produce an AXI beat or the beat reg is free.
-  wire emitting = data_active && data_remaining;
+  wire emitting = data_active && beat_remaining;
   assign in_acpt = !emitting || !tvalid_r || tready;
   wire in_handshake = in_rdy && in_acpt;
   wire out_handshake = tvalid_r && tready;
@@ -116,7 +127,8 @@ module eth_deframe (
       in_frame      <= 1'b0;
       hdr_bytes     <= '0;
       residue       <= '0;
-      sent_bytes    <= '0;
+      residue_keep  <= '0;
+      beat_idx    <= '0;
       tvalid_r    <= 1'b0;
       tlast_r     <= 1'b0;
       tdata_r     <= '0;
@@ -126,8 +138,6 @@ module eth_deframe (
       // output handshake: clear once the sink takes a beat
       if (out_handshake) begin
         tvalid_r <= 1'b0;
-        tlast_r  <= 1'b0;
-        tuser_r  <= 1'b0;
       end
 
       if (in_handshake && frame_word) begin
@@ -136,26 +146,43 @@ module eth_deframe (
 
         // ---- header capture: shift words in; after the partial last header
         // word, hdr_bytes[k] = wire byte k ----
-        if (rx_widx <= HDR_FULL_WORDS-1) begin
+        if (int'(rx_widx) <= HDR_FULL_WORDS-1) begin
           hdr_bytes <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:4]};
-        end else if (rx_widx == HDR_FULL_WORDS) begin
+        end else if (int'(rx_widx) == HDR_FULL_WORDS) begin
           {residue, hdr_bytes}  <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:RESIDUE_BYTES]};
-          sent_bytes <= '0;
+          residue_keep          <= '1;  // first DATA bytes (full word: valid)
+          beat_idx              <= '0;  // reset beat index to 0
         end
 
         // ---- DATA: one realigned AXI beat per wire word ----
         if (emitting) begin
           tvalid_r <= 1'b1;
           {residue, tdata_r} <= {in_dat, residue};
-          tkeep_r  <= is_last ? last_keep : 4'b1111;
-          // EOF closes the AXI packet even when LENGTH promised more octets
-          tlast_r  <= is_last || in_eof;
-          tuser_r  <= in_eof && !is_last;  // truncated: EOF hit with DATA still owed
-          sent_bytes <= sent_bytes + 16'd4;
+          // EOF closes the AXI packet even when LENGTH promised more octets.
+          tlast_r <= is_last || in_eof;
+          // mask tkeep to only emit LENGTH bytes in total
+          // last 4 bytes are FCS and must not be used (>> 4)
+          {residue_keep, tkeep_r} <= keep_mask_ext &
+                                     ({bv2keep(in_bytevalid), residue_keep} >> (!in_eof ? 0 : 4));
+          // truncated if last beat not reached, or not enough bytes to keep (excl. FCS)
+          tuser_r <= in_eof && (
+                        !is_last ||
+                        (4'({bv2keep(in_bytevalid), residue_keep} >> 4) < keep_mask) );
+          // TODO: this tuser only checks that *enough* octets arrived, not that the
+          // total frame length matches LENGTH — an over-padded / over-long frame
+          // still passes. A full check needs the EOF byte count, which for a
+          // PADded frame arrives after this beat, so it would mean stalling the
+          // pipeline until EOF.
+          // Stalling is not an issue as PAD bytes are not processed anyway,
+          // so their spots in the pipeline are free to use.
+          // Deferred until we actually rely on L/T = LENGTH.
+
+          beat_idx <= beat_idx + 1'b1;
         end
 
-        if (in_eof)
+        if (in_eof) begin
           rx_widx <= '0;
+        end
       end
     end
   end
