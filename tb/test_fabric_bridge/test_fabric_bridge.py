@@ -69,6 +69,26 @@ def payload(seed: int, n: int) -> bytes:
     return bytes(rng.randint(0, 255) for _ in range(n))
 
 
+def raw_frame(dst: int, src: int, len_field: int, data: bytes) -> bytes:
+    """A raw wire frame with an ARBITRARY L/T field and no auto pad/FCS — the TB
+    drives exactly these bytes (as the MAC would present them). Lets us craft
+    malformed frames where the declared length disagrees with the actual data, to
+    exercise reject / zero-fill / truncate-long."""
+    return (dst.to_bytes(6, "big") + src.to_bytes(6, "big")
+            + len_field.to_bytes(2, "big") + data)
+
+
+def eth_ii_frame(dst: int, src: int, ethertype: int, data: bytes) -> bytes:
+    """Ethernet II / TYPE frame: DST SRC ETHERTYPE DATA [PAD] FCS. The L/T field
+    holds an EtherType (> 1500), which an 802.3-LENGTH deframer mis-reads as a
+    LENGTH. 0x86DD=IPv6, 0x0800=IPv4, 0x0806=ARP — the bulk of real traffic."""
+    body = (dst.to_bytes(6, "big") + src.to_bytes(6, "big")
+            + ethertype.to_bytes(2, "big") + data)
+    if len(body) + FCS_BYTES < MIN_FRAME:
+        body += bytes(MIN_FRAME - FCS_BYTES - len(body))
+    return body + eth_fcs(body)
+
+
 # --------------------------------------------------------------------------
 # Frame <-> MAC-FIFO word packing
 # --------------------------------------------------------------------------
@@ -276,6 +296,154 @@ async def test_backpressure(dut):
     datas = [payload(100 + i, 50 + 13 * i) for i in range(6)]
     await forward_check(dut, REQ, canonical_frames(REQ, datas), datas,
                         throttle_prob=0.4, rng=random.Random(7))
+
+
+@cocotb.test()
+async def test_type_frame_rejected_and_recovers(dut):
+    """A TYPE frame (EtherType 0x86DD > 1500) is now SILENTLY DROPPED (no egress,
+    no wedge), and a following good LENGTH frame forwards intact. This is the
+    fix for the prior on-silicon wedge: a non-conforming / crafted frame can
+    neither exfiltrate nor brick the pipe."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    good = payload(7, 40)
+
+    async def send():
+        await drive_frame(dut, src, eth_ii_frame(0x11, 0x22, 0x86DD, payload(1, 40)))
+        await drive_frame(dut, src, eth_frame(REQ[2], REQ[3], good))
+
+    tx = cocotb.start_soon(send())
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))   # only the good frame egresses
+    await Combine(tx, rx)
+    got = rx.result()
+    assert len(got) == 1, f"expected 1 forwarded frame (TYPE dropped), got {len(got)}"
+    assert got[0] == sanitized(REQ, good), "good frame after a dropped TYPE frame must forward intact"
+    assert int(dut.dbg_df_type_count.value) == 1, "TYPE frame should be counted as rejected"
+    assert int(dut.dbg_df_sof_count.value) == 2, "both frames entered deframe"
+    assert int(dut.dbg_df_emit_frames.value) == 1, "only the good frame should be emitted"
+    assert int(dut.dbg_rf_state.value) == 0, "reframe must be idle (never wedged on the TYPE frame)"
+
+
+@cocotb.test()
+async def test_zero_fill_short_frame(dut):
+    """L/T (100) > actual data (40): zero-fill to LENGTH. Egress = [40 real][60 zero]."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    real = payload(3, 40)
+    tx = cocotb.start_soon(drive_frame(dut, src, raw_frame(0xAA, 0xBB, 100, real)))
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx, rx)
+    got = rx.result()
+    assert got[0] == sanitized(REQ, real + bytes(60)), \
+        f"zero-fill mismatch: len {len(got[0])} vs {len(sanitized(REQ, real + bytes(60)))}"
+    assert int(dut.dbg_df_trunc_count.value) == 1, "short frame should be counted (zero-filled)"
+    assert int(dut.dbg_rf_last_fwd_len.value) == 100
+    assert int(dut.dbg_rf_state.value) == 0
+
+
+@cocotb.test()
+async def test_truncate_long_frame(dut):
+    """actual data (100) > L/T (40): forward exactly 40, silently discard the rest."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    data = payload(4, 100)
+    tx = cocotb.start_soon(drive_frame(dut, src, raw_frame(0xCC, 0xDD, 40, data)))
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx, rx)
+    assert rx.result()[0] == sanitized(REQ, data[:40]), "must forward exactly the first 40 octets"
+    assert int(dut.dbg_rf_last_fwd_len.value) == 40
+    assert int(dut.dbg_rf_state.value) == 0
+
+
+@cocotb.test()
+async def test_length_boundary(dut):
+    """LEN=1500 accepted (max); LEN=1501 rejected (silent drop)."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    d1500 = payload(5, 1500)
+    tx = cocotb.start_soon(drive_frame(dut, src, eth_frame(REQ[2], REQ[3], d1500)))
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx, rx)
+    assert rx.result()[0] == sanitized(REQ, d1500), "LEN=1500 must forward"
+    good = payload(6, 50)
+
+    async def send():
+        await drive_frame(dut, src, raw_frame(0x1, 0x2, 1501, payload(9, 200)))
+        await drive_frame(dut, src, eth_frame(REQ[2], REQ[3], good))
+
+    tx2 = cocotb.start_soon(send())
+    rx2 = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx2, rx2)
+    assert rx2.result()[0] == sanitized(REQ, good), "LEN=1501 dropped; next frame forwards"
+
+
+@cocotb.test()
+async def test_type_frame_rejected_rsp_direction(dut):
+    """Reject + recovery on the response path (port1 -> port0)."""
+    await reset(dut)
+    src = bundle(dut, RSP[0])
+    sink = bundle(dut, RSP[1])
+    good = payload(8, 46)
+
+    async def send():
+        await drive_frame(dut, src, eth_ii_frame(0x11, 0x22, 0x0800, payload(2, 30)))
+        await drive_frame(dut, src, eth_frame(RSP[2], RSP[3], good))
+
+    tx = cocotb.start_soon(send())
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx, rx)
+    assert rx.result()[0] == sanitized(RSP, good), "rsp good frame must forward after a dropped TYPE frame"
+
+
+async def _idle(dut, n):
+    for _ in range(n):
+        await RisingEdge(dut.clk)
+
+
+@cocotb.test()
+async def test_instrumentation_length_frame(dut):
+    """A normal 802.3 LENGTH frame: the instrumentation taps must report a clean
+    frame — sof_count=1, first_lt=L, type_count=0, trunc_count=0, and reframe
+    sampled the SAME length in-band at SOF (tuser_at_sof=L)."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    sink.acpt.value = 1
+    L = 40
+    frame = eth_frame(REQ[2], REQ[3], payload(11, L))
+    await drive_frame(dut, src, frame)
+    await _idle(dut, 60)
+    assert int(dut.dbg_df_sof_count.value) == 1
+    assert int(dut.dbg_df_first_lt.value) == L
+    assert int(dut.dbg_df_type_count.value) == 0
+    assert int(dut.dbg_df_trunc_count.value) == 0
+    assert int(dut.dbg_rf_tuser_at_sof.value) == L, \
+        "reframe must sample the SAME length deframe reported (in-band, at SOF)"
+
+
+@cocotb.test()
+async def test_instrumentation_type_frame(dut):
+    """An Ethernet II / TYPE frame is REJECTED: type_count=1 and first_lt=0x86DD
+    (the on-silicon signature of real IPv6/IPv4/ARP traffic), but it never reaches
+    reframe — so it is NOT emitted (dfEmit=0), NOT zero-filled (trunc_count=0), and
+    reframe never sampled it (tuser_at_sof stays 0). Silent, deterministic drop."""
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    sink.acpt.value = 1
+    frame = eth_ii_frame(0x001122334455, 0x66778899AABB, 0x86DD, payload(12, 40))
+    await drive_frame(dut, src, frame)
+    await _idle(dut, 60)
+    assert int(dut.dbg_df_sof_count.value) == 1
+    assert int(dut.dbg_df_first_lt.value) == 0x86DD
+    assert int(dut.dbg_df_type_count.value) == 1, "TYPE frame counted as rejected"
+    assert int(dut.dbg_df_trunc_count.value) == 0, "rejected frame is not emitted/zero-filled"
+    assert int(dut.dbg_df_emit_frames.value) == 0, "rejected frame must not be emitted"
+    assert int(dut.dbg_rf_tuser_at_sof.value) == 0, "reframe never saw the rejected frame"
 
 
 @cocotb.test()

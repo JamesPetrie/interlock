@@ -361,6 +361,14 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_o_rdy"  
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_o_eof"    "dbg_apb_0:rf_o_eof" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_tvalid"   "dbg_apb_0:df_tvalid" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_eth_len"  "dbg_apb_0:df_eth_len" }
+# failure-theory instrumentation taps (TYPE-vs-LENGTH frame diagnosis)
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_sof_count"   "dbg_apb_0:df_sof_count" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_first_lt"    "dbg_apb_0:df_first_lt" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_type_count"  "dbg_apb_0:df_type_count" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_trunc_count" "dbg_apb_0:df_trunc_count" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_tuser_at_sof" "dbg_apb_0:rf_tuser_at_sof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_emit_frames" "dbg_apb_0:df_emit_frames" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_last_fwd_len" "dbg_apb_0:rf_last_fwd_len" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_IOD_CDR_C0_0:CDR_CLOCKS" "PF_IOD_CDR_C1_0:CDR_CLOCKS" "PF_IOD_CDR_CCC_C0_0:CDR_CLOCKS" }
 
 # ============= Port 0  (Mac side: CORETSE_0 / PF_IOD_CDR_C0 / SSDetect_0) ===

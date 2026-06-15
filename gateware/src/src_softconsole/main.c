@@ -1054,5 +1054,38 @@ int main(void)
         uart_print(" dfTvld=");         uart_print_dec((d2 >> 5) & 1);
         uart_print(" frames=");         uart_print_hex32(d3);
         uart_print("\r\n");
+
+        /* [dbg2] failure-theory probes (dbg_apb regs 0x14/0x18/0x1C). These
+         * answer, on silicon, WHY the bridge does not forward:
+         *   dfSOFs=0                  -> no frame reaches deframe (PHY/MAC/link)
+         *   typeFrames>0 / firstLT>05DC -> the wire carries Ethernet II / TYPE
+         *        frames (0x86DD=IPv6, 0800=IPv4, 0806=ARP); the LENGTH-only
+         *        deframe mis-reads the EtherType as a ~34 KB length and reframe
+         *        wedges. This is the leading theory (reproduced in sim).
+         *   truncs>0                  -> frames end before their declared LENGTH
+         *        (every TYPE frame does this; a LENGTH frame should not)
+         *   tuserAtSOF == dfLen       -> the in-band length hand-off is correct
+         *        (rules out the old synth-vs-sim timing theory) */
+        uint32_t d5 = mac_rd(0x60004000, 0x14);   /* {trunc, type}    */
+        uint32_t d6 = mac_rd(0x60004000, 0x18);   /* {sof,   firstLT} */
+        uint32_t d7 = mac_rd(0x60004000, 0x1C);   /* {-,     tuser@SOF}*/
+        uart_print("[dbg2] dfSOFs=");   uart_print_hex16((uint16_t)(d6 >> 16));
+        uart_print(" firstLT=");        uart_print_hex16((uint16_t)d6);
+        uart_print(" rejected=");       uart_print_hex16((uint16_t)d5);          /* LEN>1500 dropped */
+        uart_print(" zeroFill=");       uart_print_hex16((uint16_t)(d5 >> 16));  /* short, zero-filled */
+        uart_print(" tuserAtSOF=");     uart_print_hex16((uint16_t)d7);
+        uart_print("\r\n");
+
+        /* [dbg3] the forwarding accounting chain. Read it as:
+         *   dfSOFs  = frames that entered deframe
+         *   rejected= dropped (LEN>1500 / TYPE)         -> dfSOFs-rejected accepted
+         *   dfEmit  = frames deframe emitted to reframe  (should == dfSOFs-rejected)
+         *   frames  = frames reframe COMPLETED (egress)  (should == dfEmit)
+         *   lastFwdLen = LENGTH of the last forwarded frame (sanity vs what we sent)
+         * Gaps localize the break: dfSOFs>0 & dfEmit=0 -> deframe; dfEmit>0 & frames=0 -> reframe. */
+        uint32_t d8 = mac_rd(0x60004000, 0x20);   /* {dfEmit, lastFwdLen} */
+        uart_print("[dbg3] dfEmit=");    uart_print_hex16((uint16_t)(d8 >> 16));
+        uart_print(" lastFwdLen=");      uart_print_hex16((uint16_t)d8);
+        uart_print("\r\n");
     }
 }

@@ -36,6 +36,10 @@ module eth_deframe (
   output wire [3:0]  tkeep,
   output wire        tlast,
   output wire        tuser,
+  output wire [15:0] tlen,          // in-band L/T sideband (the captured LENGTH field),
+                                    // held stable with tvalid for the whole frame — the
+                                    // consumer samples it AT the tvalid handshake, never
+                                    // off a separately-timed event.
 
   // Status / debug — live view of the header shift register: the fields are
   // valid from dbg_hdr_valid (header fully shifted in, before the first data
@@ -43,7 +47,18 @@ module eth_deframe (
   output wire        dbg_hdr_valid,
   output wire [47:0] dbg_eth_dst,
   output wire [47:0] dbg_eth_src,
-  output wire [15:0] dbg_eth_len
+  output wire [15:0] dbg_eth_len,
+
+  // ---- instrumentation taps (failure-theory probes; see dbg_apb) ----
+  // Sticky / counting probes that survive a slow firmware poll. They answer:
+  // does ANY frame reach deframe, and is the wire carrying 802.3-LENGTH frames
+  // (L/T <= 1500) or Ethernet II / TYPE frames (L/T > 1500, e.g. IPv6 0x86DD)
+  // that this LENGTH-only deframer mis-reads as a 34 KB length?
+  output wire [15:0] dbg_sof_count,    // frames that entered deframe (in_sof beats)
+  output wire [15:0] dbg_first_lt,     // L/T field of the FIRST frame (captured once)
+  output wire [15:0] dbg_type_count,   // frames whose L/T > 1500 -> REJECTED (silent drop)
+  output wire [15:0] dbg_trunc_count,  // conforming frames that ended short of LENGTH (zero-filled by reframe)
+  output wire [15:0] dbg_emit_frames   // frames deframe emitted to AXIS (passed reject)
 );
 
   import eth_pkg::*;
@@ -69,6 +84,18 @@ module eth_deframe (
   logic [8*RESIDUE_BYTES-1:0] residue;    // DATA tail bytes of the previous beat
   len_t                       sent_bytes; // DATA bytes emitted so far
   len_t                       eth_len_q;  // LENGTH captured directly off the wire
+
+  // instrumentation registers (PROTOTYPE_DEBUG taps; do not affect the datapath —
+  // these are bring-up only and must be elided from the production bitstream, since
+  // any prover-influenceable observable is itself an exfiltration channel)
+  len_t sof_count_q, type_count_q, trunc_count_q, first_lt_q, emit_frames_q;
+  logic first_lt_seen;
+  // reject_f: this frame's L/T exceeds the protocol maximum (TYPE frame / oversized).
+  // Functional (not debug): such frames are SILENTLY dropped — no AXIS output at all,
+  // words drained to EOF. This is the deterministic, channel-free reject.
+  logic reject_f;
+  // L/T extracted from the partial last header word (wire bytes 12,13, big-endian)
+  wire len_t lt_capture = {in_dat[7:0], in_dat[15:8]};
 
   // Parsed header view of the shift register (dst/src — debug outputs only).
   wire eth_header_t eth_hdr = eth_hdr_from_bytes(hdr_bytes);
@@ -102,17 +129,29 @@ module eth_deframe (
                              : (eth_len[1:0] == 2'd2) ? 4'b0011
                              :                          4'b0111;
 
+  // in-band L/T sideband: the registered LENGTH, stable from the partial last
+  // header word (set before the first emit) through the whole frame.
+  assign tlen          = eth_len_q;
+
   // Debug = combinational view of the held header register.
   assign dbg_hdr_valid = data_active;
   assign dbg_eth_dst   = eth_hdr.dst;
   assign dbg_eth_src   = eth_hdr.src;
   assign dbg_eth_len   = eth_len;
 
+  // instrumentation taps
+  assign dbg_sof_count   = sof_count_q;
+  assign dbg_first_lt    = first_lt_q;
+  assign dbg_type_count  = type_count_q;
+  assign dbg_trunc_count = trunc_count_q;
+  assign dbg_emit_frames = emit_frames_q;
+
   // Words outside SOF..EOF are accepted but dropped (sampling starts at SOF).
   wire frame_word = in_frame || in_sof;
 
   // Accept whenever the word doesn't produce an AXI beat or the beat reg is free.
-  wire emitting = data_active && data_remaining;
+  // reject_f forces emitting low for the whole frame -> drop (drain to EOF, no output).
+  wire emitting = data_active && data_remaining && !reject_f;
   assign in_acpt = !emitting || !tvalid_r || tready;
   wire in_handshake = in_rdy && in_acpt;
   wire out_handshake = tvalid_r && tready;
@@ -125,6 +164,13 @@ module eth_deframe (
       residue       <= '0;
       sent_bytes    <= '0;
       eth_len_q     <= '0;
+      sof_count_q   <= '0;
+      type_count_q  <= '0;
+      trunc_count_q <= '0;
+      first_lt_q    <= '0;
+      first_lt_seen <= 1'b0;
+      emit_frames_q <= '0;
+      reject_f      <= 1'b0;
       tvalid_r    <= 1'b0;
       tlast_r     <= 1'b0;
       tdata_r     <= '0;
@@ -142,6 +188,9 @@ module eth_deframe (
         in_frame <= !in_eof;
         rx_widx  <= rx_widx + 1'b1;
 
+        // instrumentation: count frames entering deframe (one SOF per frame)
+        if (in_sof) sof_count_q <= sof_count_q + 1'b1;
+
         // ---- header capture: shift words in; after the partial last header
         // word, hdr_bytes[k] = wire byte k ----
         if (rx_widx <= HDR_FULL_WORDS-1) begin
@@ -153,8 +202,20 @@ module eth_deframe (
           // LENGTH = wire bytes 12,13 (big-endian). This last header word carries
           // wire bytes 12..15; the MAC delivers wire byte N in in_dat[8*N +: 8],
           // so byte12 = in_dat[7:0] (MSB), byte13 = in_dat[15:8] (LSB).
-          eth_len_q  <= {in_dat[7:0], in_dat[15:8]};
+          eth_len_q  <= lt_capture;
           sent_bytes <= '0;
+          // instrumentation: sticky first L/T + count TYPE frames (L/T > 1500).
+          // A LENGTH-only deframer mis-reads a TYPE frame's EtherType as a length;
+          // type_count rising is the on-silicon signature of that mismatch.
+          if (!first_lt_seen) begin
+            first_lt_q    <= lt_capture;
+            first_lt_seen <= 1'b1;
+          end
+          // PROTOCOL: reject frames whose reported length exceeds the maximum
+          // (1500). This rejects every Ethernet II / TYPE frame (EtherTypes are
+          // >= 1536) by construction. Set the per-frame drop flag and count it.
+          reject_f <= (lt_capture > 16'd1500);
+          if (lt_capture > 16'd1500) type_count_q <= type_count_q + 1'b1;
         end
 
         // ---- DATA: one realigned AXI beat per wire word ----
@@ -166,10 +227,17 @@ module eth_deframe (
           tlast_r  <= is_last || in_eof;
           tuser_r  <= in_eof && !is_last;  // truncated: EOF hit with DATA still owed
           sent_bytes <= sent_bytes + 16'd4;
+          // instrumentation: count conforming frames that ended short of LENGTH
+          // (reframe zero-fills them). TYPE frames don't reach here (rejected).
+          if (in_eof && !is_last) trunc_count_q <= trunc_count_q + 1'b1;
+          // instrumentation: count each emitted frame on its closing beat
+          if (is_last || in_eof) emit_frames_q <= emit_frames_q + 1'b1;
         end
 
-        if (in_eof)
-          rx_widx <= '0;
+        if (in_eof) begin
+          rx_widx  <= '0;
+          reject_f <= 1'b0;   // clear drop flag for the next frame
+        end
       end
     end
   end

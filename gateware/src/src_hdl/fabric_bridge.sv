@@ -70,7 +70,16 @@ module fabric_bridge (
   output wire        dbg_rf_o_rdy,
   output wire        dbg_rf_o_eof,
   output wire        dbg_df_tvalid,
-  output wire [15:0] dbg_df_eth_len   // raw LENGTH deframe extracted (req_len) — vs reframe's data_end
+  output wire [15:0] dbg_df_eth_len,  // raw LENGTH deframe extracted (req_len) — vs reframe's data_end
+
+  // ---- failure-theory instrumentation taps (request path) ----
+  output wire [15:0] dbg_df_sof_count,   // frames that entered deframe
+  output wire [15:0] dbg_df_first_lt,    // L/T of the first frame (sticky)
+  output wire [15:0] dbg_df_type_count,  // TYPE frames (L/T > 1500)
+  output wire [15:0] dbg_df_trunc_count, // conforming frames ended short (zero-filled)
+  output wire [15:0] dbg_rf_tuser_at_sof, // length reframe sampled at the 1st SOF (sticky)
+  output wire [15:0] dbg_df_emit_frames,  // frames deframe emitted (passed reject)
+  output wire [15:0] dbg_rf_last_fwd_len  // length of last frame reframe completed
 );
 
   // Each direction is sanitized at the Ethernet layer:
@@ -116,10 +125,16 @@ module fabric_bridge (
     .tkeep         (req_tkeep),
     .tlast         (req_tlast),
     .tuser         (),
+    .tlen          (req_len),            // in-band length sideband -> reframe.tuser
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (req_len)
+    .dbg_eth_len   (),
+    .dbg_sof_count (dbg_df_sof_count),
+    .dbg_first_lt  (dbg_df_first_lt),
+    .dbg_type_count(dbg_df_type_count),
+    .dbg_trunc_count(dbg_df_trunc_count),
+    .dbg_emit_frames(dbg_df_emit_frames)
   );
 
   eth_reframe #(
@@ -146,7 +161,9 @@ module fabric_bridge (
     .dbg_sent      (dbg_rf_sent),
     .dbg_fed       (dbg_rf_fed),
     .dbg_o_rdy     (dbg_rf_o_rdy),
-    .dbg_o_eof     (dbg_rf_o_eof)
+    .dbg_o_eof     (dbg_rf_o_eof),
+    .dbg_tuser_at_sof (dbg_rf_tuser_at_sof),
+    .dbg_last_fwd_len (dbg_rf_last_fwd_len)
   );
 
   // deframe_req's AXI-valid: does the ingress deframer ever produce output?
@@ -178,10 +195,16 @@ module fabric_bridge (
     .tkeep         (rsp_tkeep),
     .tlast         (rsp_tlast),
     .tuser         (),
+    .tlen          (rsp_len),            // in-band length sideband -> reframe.tuser
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (rsp_len)
+    .dbg_eth_len   (),
+    .dbg_sof_count (),
+    .dbg_first_lt  (),
+    .dbg_type_count(),
+    .dbg_trunc_count(),
+    .dbg_emit_frames()
   );
 
   eth_reframe #(
@@ -201,7 +224,9 @@ module fabric_bridge (
     .out_sof       (tse0_mtx_sof),
     .out_eof       (tse0_mtx_eof),
     .out_dat       (tse0_mtx_dat),
-    .out_bytevalid (tse0_mtx_bytevalid)
+    .out_bytevalid (tse0_mtx_bytevalid),
+    .dbg_tuser_at_sof (),
+    .dbg_last_fwd_len ()
   );
 
 endmodule

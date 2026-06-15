@@ -44,7 +44,9 @@ module eth_reframe #(
   output wire [15:0] dbg_sent,      // bytes emitted so far
   output wire [15:0] dbg_fed,       // bytes appended so far
   output wire        dbg_o_rdy,     // driving a word to the MAC
-  output wire        dbg_o_eof      // emitting the last word
+  output wire        dbg_o_eof,     // emitting the last word
+  output wire [15:0] dbg_tuser_at_sof, // sticky: tuser value sampled at the 1st SOF handshake
+  output wire [15:0] dbg_last_fwd_len  // length of the last frame reframe completed (positive fwd proof)
 );
 
   import eth_pkg::*;
@@ -68,10 +70,14 @@ module eth_reframe #(
   // ------------------------------------------------------------------
   len_t data_end;      // HDR + L
   len_t pad_end;       // HDR + L + PAD
-  len_t tuser_q;       // tuser registered LOCALLY (clean reg->reg into data_end/pad_end;
-                       // removes the deframe->reframe cross-module combinational path that
-                       // fed the geometry flops directly — the prime suspect for the
-                       // garbage LENGTH latched on silicon)
+  // In-band length: data_end/pad_end are loaded from `tuser` sampled AT the F_IDLE
+  // first-beat handshake (tvalid high) — never off a free-running wire latched on a
+  // separately-timed event. tuser is the deframe length sideband, held with tvalid;
+  // sampling it exactly when tvalid asserts is the latency-insensitive contract and
+  // removes the whole cross-module-timing failure class (the prior tuser_q approach
+  // registered every cycle and was the suspected synth-vs-sim hand-off).
+  len_t tuser_at_sof_q;   // sticky debug: the tuser value sampled at the 1st SOF
+  logic tuser_at_sof_seen;
 
   // ------------------------------------------------------------------
   // Byte shift register, input and output in lock-step
@@ -82,6 +88,14 @@ module eth_reframe #(
   len_t                   fed;     // frame bytes appended so far
   len_t                   sent;    // frame bytes emitted so far
   logic [31:0]            crc_rem;
+
+  // data_done: deframe has signalled tlast for this frame. If it arrives while we
+  // are still in the DATA region (actual < reported LENGTH, a short frame), the
+  // remaining DATA octets are ZERO-FILLED instead of waiting forever — reusing the
+  // PAD zero-shift path. Forced zeros => 0 free bits, so no exfiltration channel,
+  // and a crafted short frame can no longer wedge the FSM.
+  logic                   data_done;
+  len_t                   last_fwd_len_q;   // PROTOTYPE_DEBUG: length of last completed frame
 
   wire feeding = fed < data_end;
 
@@ -110,13 +124,17 @@ module eth_reframe #(
   assign dbg_fed      = fed;
   assign dbg_o_rdy    = o_rdy;
   assign dbg_o_eof    = o_eof;
+  assign dbg_tuser_at_sof = tuser_at_sof_q;
+  assign dbg_last_fwd_len = last_fwd_len_q;
 
   wire out_handshake = o_rdy && out_acpt;
   wire out_free      = !o_rdy || out_acpt;
 
-  // one word out and (while feeding) one beat in — or everything stalls
-  wire advance  = (state == F_RUN) && out_free && (!feeding || tvalid);
-  assign tready = (state == F_RUN) && out_free && feeding;
+  // one word out and (while feeding) one beat in — or everything stalls.
+  // Once data_done, the DATA region completes with zeros (no tvalid needed), so a
+  // short frame fills to LENGTH rather than wedging; tready drops (no more input).
+  wire advance  = (state == F_RUN) && out_free && (!feeding || tvalid || data_done);
+  assign tready = (state == F_RUN) && out_free && feeding && !data_done;
   wire in_handshake = tvalid && tready;
 
   // body tail occupies pad_end % 4 octets of the penultimate word
@@ -172,17 +190,16 @@ module eth_reframe #(
       crc_rem  <= CRC32_INIT;
       data_end <= '0;
       pad_end  <= '0;
-      tuser_q  <= '0;
+      tuser_at_sof_q   <= '0;
+      tuser_at_sof_seen <= 1'b0;
+      data_done      <= 1'b0;
+      last_fwd_len_q <= '0;
       o_rdy    <= 1'b0;
       o_sof    <= 1'b0;
       o_eof    <= 1'b0;
       o_dat    <= '0;
       o_bv     <= 2'b00;
     end else begin
-      // register the cross-module length locally every cycle (stable well before
-      // reframe leaves F_IDLE, so == tuser at the SOF edge but with clean timing)
-      tuser_q <= tuser;
-
       if (out_handshake) begin
         o_rdy <= 1'b0;
         o_sof <= 1'b0;
@@ -192,15 +209,21 @@ module eth_reframe #(
 
       case (state)
         F_IDLE: begin
-          // SOP: preload the header (folding it into the CRC) + latch geometry
+          // SOP: preload the header (folding it into the CRC) + latch geometry.
+          // tvalid IS the handshake; tuser is sampled in-band on this exact edge.
           if (tvalid) begin
             buffer   <= hdr_bytes;
             fed      <= len_t'(ETH_HDR_BYTES);
             sent     <= '0;
             crc_rem  <= CRC32_INIT;
-            data_end <= ETH_HDR_BYTES + tuser_q;
-            pad_end  <= ETH_HDR_BYTES + tuser_q + pad_len(tuser_q);
+            data_end <= ETH_HDR_BYTES + tuser;
+            pad_end  <= ETH_HDR_BYTES + tuser + pad_len(tuser);
             state    <= F_RUN;
+            data_done <= 1'b0;   // fresh frame
+            if (!tuser_at_sof_seen) begin
+              tuser_at_sof_q    <= tuser;
+              tuser_at_sof_seen <= 1'b1;
+            end
           end
         end
 
@@ -215,6 +238,10 @@ module eth_reframe #(
             sent            <= sent_next;
             if (in_handshake) begin
               fed <= fed + (!tlast ? 16'd4 : $countones(tkeep));  // last beat may be partial
+              // deframe signalled end-of-data. If we are still feeding (actual <
+              // reported LENGTH), the rest of the DATA region zero-fills (advance via
+              // data_done) instead of waiting for octets that will never arrive.
+              if (tlast) data_done <= 1'b1;
             end
 
             if (pen_next)
@@ -247,6 +274,7 @@ module eth_reframe #(
             o_eof <= 1'b1;
             o_bv  <= last_bv;
             sent  <= sent_next;
+            last_fwd_len_q <= data_end - len_t'(ETH_HDR_BYTES);  // PROTOTYPE_DEBUG
             state <= F_IDLE;
           end
         end
