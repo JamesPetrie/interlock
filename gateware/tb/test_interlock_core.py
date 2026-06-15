@@ -1,12 +1,11 @@
-"""G3-G5 conformance: interlock_core vs the Python golden model (prototype/
-interlock.py + wire.py), HMAC deferred.
+"""interlock_core conformance vs the Python golden model (prototype/interlock.py
++ wire.py) — the FULL 140-byte certificate (108-byte body || HMAC-SHA256 tag).
 
 Drives the DUT and a Python `Interlock` with identical packet / bucket-tick /
-nonce events; asserts each accept/drop decision agrees and the emitted 108-byte
-certificate *body* equals the model's body (`ref_cert[:-TAG]`). One cert-body
-equality covers hashing, the bucket/window fold, and cert assembly; the
-accept/drop check covers the drop rules. The HMAC tag is added in a later stage,
-at which point the comparison extends to the full certificate with no test change.
+nonce events; asserts each accept/drop decision agrees and the emitted certificate
+equals the model's `on_second()` byte-for-byte. One cert equality covers hashing,
+the bucket/window fold, cert assembly, and the HMAC; the accept/drop check covers
+the drop rules. (The DUT's mac_key is set to the model's MAC in reset.)
 """
 import os
 import sys
@@ -117,8 +116,8 @@ async def run_window(dut, ref, schedule):
         ref.on_bucket_boundary()
     while "body" not in box:
         await RisingEdge(dut.clk)
-    ref_body = ref.on_second()[:-W.TAG]
-    return box["body"], ref_body
+    ref_cert = ref.on_second()           # full 140-byte cert (body || HMAC tag)
+    return box["body"], ref_cert
 
 
 def new_model():
@@ -227,7 +226,7 @@ async def tick_burst(dut):
     while "body" not in box:
         await RisingEdge(dut.clk)
     assert dut.tick_err.value == 0, "tick_err set (queue overflowed unexpectedly)"
-    assert box["body"] == ref.on_second()[:-W.TAG]
+    assert box["body"] == ref.on_second()
     dut._log.info("tick_burst: N back-to-back ticks all queued, cert body matches")
 
 

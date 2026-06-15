@@ -2,11 +2,10 @@
 
 Gateware twin of `prototype/interlock.py` — hashes every packet, folds per
 direction into a running bucket hash, folds buckets into a per-second window
-hash, and emits the certificate. Built bottom-up and checked at every stage
-against the Python reference (`prototype/wire.py` + `interlock.py`) via cocotb.
-**The HMAC tag is deferred** — the Core emits the 108-byte certificate *body*;
-the HMAC FSM (over the same SHA core) is the next stage and extends the body to
-the full 140-byte certificate with no change to the conformance method.
+hash, assembles the certificate body, and HMAC-tags it. Built bottom-up and
+checked at every stage against the Python reference (`prototype/wire.py` +
+`interlock.py`) via cocotb. The Core emits the **full 140-byte certificate**
+(108-byte body || HMAC-SHA256 tag), byte-identical to `interlock.py on_second()`.
 
 ## Status
 
@@ -15,11 +14,12 @@ the full 140-byte certificate with no change to the conformance method.
 | G0 | Vendor secworks SHA-256 core | ✅ green vs NIST + hashlib fuzz |
 | G1 | `sha256_stream` (byte-stream → auto-pad → digest) | ✅ green vs hashlib (empty/boundaries/fuzz/gappy/reuse) |
 | G2 | `pkt_record` (H(ct) → packet_hash → record) | ✅ green vs `wire.record()` |
-| G3–G5 | `interlock_core` (drop rules, bucket+window fold, cert body) | ✅ 8 tests green; cert body byte-identical to the model |
+| G3–G5 | `interlock_core` (drop rules, bucket+window fold, cert body) | ✅ green; matches the model |
+| G7 | `hmac_sha256` FSM + integration → **full 140-byte cert** | ✅ 8 tests green; cert byte-identical to `on_second()`; HMAC unit also green vs RFC 4231 |
 | — | Verilator `--lint-only -Wall` | ✅ clean (catches synth-vs-sim issues) |
 | — | Independent conformance audit (A-G5) | ✅ no cert discrepancy; A1 (tick queue) + A2 (33-bit cap) fixed, gaps now tested |
-| G7 | HMAC FSM → full 140-byte cert | ⬜ next |
 | G6 | FPGA integration + on-hardware gate | ⬜ scoped (see below) |
+| G8 | Swap HMAC → DPA-resistant User Crypto (SCA-hardened) | ⬜ future (see docs/gateware-crypto-backend.md) |
 
 ## Files
 
@@ -27,8 +27,10 @@ the full 140-byte certificate with no change to the conformance method.
 - `src/core/sha256_stream.v` — streaming SHA-256 wrapper (the keystone: byte-stream
   in, automatic padding, `init`/`next` sequencing, re-initializable for running contexts).
 - `src/core/pkt_record.v` — per-packet record path (two `sha256_stream` instances).
+- `src/core/hmac_sha256.v` — HMAC-SHA256 FSM (two passes over one `sha256_stream`).
 - `src/core/interlock_core.v` — the Core: validity/drop rules, per-direction running
-  bucket + window hashes, 108-byte cert body assembly. Port contract in the header.
+  bucket + window hashes, cert body assembly + HMAC → full 140-byte cert. Port
+  contract in the header.
 - `tb/sim.py` — cocotb runner (Icarus). `tb/test_*.py` — the benches.
 
 ## Running the sims
@@ -37,7 +39,8 @@ the full 140-byte certificate with no change to the conformance method.
 python3 gateware/tb/sim.py sha256_core      # G0
 python3 gateware/tb/sim.py sha256_stream    # G1
 python3 gateware/tb/sim.py pkt_record       # G2
-python3 gateware/tb/sim.py interlock_core   # G3-G5 (the full conformance suite)
+python3 gateware/tb/sim.py hmac_sha256      # G7 unit (vs RFC 4231 + Python hmac)
+python3 gateware/tb/sim.py interlock_core   # G3-G7 full conformance suite (140-byte cert)
 ```
 
 Each bench imports the Python reference from `../../prototype` and checks the RTL

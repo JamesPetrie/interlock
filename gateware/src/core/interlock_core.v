@@ -1,4 +1,4 @@
-// interlock_core — gateware twin of prototype/interlock.py (HMAC deferred).
+// interlock_core — gateware twin of prototype/interlock.py.
 //
 // Processes packets one at a time (the conformance subset; full-duplex is a
 // later throughput pass). For each packet: pkt_record computes the 44B record;
@@ -6,10 +6,11 @@
 // per-direction bucket hash. On bucket_tick the bucket hash is finalized and
 // folded into a per-direction cert-window hash. After N ticks the window roots
 // form the 108-byte certificate body (version|iid|bucket_start|N|overall_in|
-// overall_out|nonce), streamed out on cert_*. The HMAC tag is NOT appended yet.
+// overall_out|nonce); hmac_sha256 then tags it and the full 140-byte certificate
+// (body || HMAC-SHA256 tag) streams out on cert_*.
 //
 // Mirrors the streaming model exactly (H(concat) == streaming update), so the
-// emitted body is byte-identical to wire.cert_body_from_roots(...). Verilog-2001.
+// emitted certificate is byte-identical to interlock.py on_second(). Verilog-2001.
 module interlock_core #(
     parameter IID  = 7,
     parameter N    = 8,            // buckets per certificate
@@ -52,10 +53,10 @@ module interlock_core #(
     localparam BOOT=0, IDLE=1, FOLD=2, DROP=3,
                B_FIN=4, B_WAIT=5, B_FOLD=6, B_REINIT=7, B_DONE=8,
                C_FIN_IN=9, C_WAIT_IN=10, C_FIN_OUT=11, C_WAIT_OUT=12,
-               C_EMIT=13, C_REINIT=14;
+               C_EMIT=13, C_REINIT=14, H_START=15, H_FEED=16, H_WAIT=17;
 
     localparam [3:0] TICK_MAX = 4'hF;
-    reg [3:0]   state;
+    reg [4:0]   state;
     reg [3:0]   tick_cnt;          // pending bucket ticks (queued, not lost)
     reg         tick_ovf;          // sticky: queue saturated, a tick was dropped
     reg         bd;                // direction being processed at a boundary
@@ -68,7 +69,9 @@ module interlock_core #(
     reg [255:0] ov_in, ov_out;
     reg [351:0] rbuf;  reg [6:0] rcnt;     // record fold buffer
     reg [255:0] wbuf;  reg [5:0] wcnt;     // bucket-digest fold buffer
-    reg [863:0] cbuf;  reg [7:0] ccnt;     // cert body output buffer
+    reg [863:0] body_r, hb;                // 108-byte cert body (held / HMAC feed)
+    reg [1119:0] cbuf; reg [7:0] ccnt;     // 140-byte certificate output buffer
+    reg          hm_start;
     reg         acc_dir;
 
     // --- packet record path ---
@@ -126,9 +129,17 @@ module interlock_core #(
     // a queued tick is consumed only when IDLE and not starting a packet fold
     wire consume_tick = (state==IDLE) && !pr_rec_valid && (tick_cnt != 4'd0);
 
-    // --- cert body output ---
+    // --- HMAC over the 108-byte body -> tag ---
+    wire        hm_ready, hm_done;
+    wire [255:0] hm_tag;
+    hmac_sha256 hm(.clk(clk), .reset_n(rst_n), .start(hm_start), .key(mac_key),
+        .msg_valid(state==H_FEED), .msg_data(hb[863:856]),
+        .msg_last((state==H_FEED) && (ccnt==8'd1)),
+        .msg_ready(hm_ready), .done(hm_done), .tag(hm_tag));
+
+    // --- certificate output (140 bytes: 108-byte body || 32-byte HMAC tag) ---
     assign cert_valid = (state==C_EMIT);
-    assign cert_data  = cbuf[863:856];
+    assign cert_data  = cbuf[1119:1112];
     assign cert_last  = (state==C_EMIT) && (ccnt==8'd1);
     assign idle       = (state==IDLE);
     assign tick_err   = tick_ovf;
@@ -139,9 +150,9 @@ module interlock_core #(
             nb<=0; bucket<=0; used_in<=0; used_out<=0;
             last_in_id<=0; last_out_id<=0; have_in<=0; have_out<=0; nonce_r<=0;
             bin_init<=0; bin_fin<=0; bout_init<=0; bout_fin<=0;
-            win_i_init<=0; win_i_fin<=0; win_o_init<=0; win_o_fin<=0; bd<=0;
+            win_i_init<=0; win_i_fin<=0; win_o_init<=0; win_o_fin<=0; bd<=0; hm_start<=0;
         end else begin
-            pkt_done<=0;
+            pkt_done<=0; hm_start<=0;
             bin_init<=0; bin_fin<=0; bout_init<=0; bout_fin<=0;
             win_i_init<=0; win_i_fin<=0; win_o_init<=0; win_o_fin<=0;
             if (nonce_valid) nonce_r<=nonce;
@@ -199,8 +210,18 @@ module interlock_core #(
                 C_FIN_OUT: begin win_o_fin<=1; state<=C_WAIT_OUT; end
                 C_WAIT_OUT: if (win_o_done) begin
                         ov_out<=win_o_dig;
-                        cbuf<={VERSION, IID_W, bstart, N_W, ov_in, win_o_dig, nonce_r};
-                        ccnt<=8'd108; state<=C_EMIT;
+                        body_r<={VERSION, IID_W, bstart, N_W, ov_in, win_o_dig, nonce_r};
+                        hb    <={VERSION, IID_W, bstart, N_W, ov_in, win_o_dig, nonce_r};
+                        state<=H_START;
+                    end
+                H_START: begin hm_start<=1; ccnt<=8'd108; state<=H_FEED; end
+                H_FEED:  if (hm_ready) begin
+                        hb<=hb<<8; ccnt<=ccnt-1;
+                        if (ccnt==8'd1) state<=H_WAIT;
+                    end
+                H_WAIT:  if (hm_done) begin
+                        cbuf<={body_r, hm_tag};      // 108-byte body || 32-byte tag
+                        ccnt<=8'd140; state<=C_EMIT;
                     end
                 C_EMIT:
                     if (cert_ready) begin
@@ -222,7 +243,7 @@ module interlock_core #(
     end
 
 `ifdef SIMDBG
-    reg [3:0] dbg_prev;
+    reg [4:0] dbg_prev;
     always @(posedge clk) begin
         dbg_prev <= state;
         if (state !== dbg_prev)
