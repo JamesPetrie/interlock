@@ -209,3 +209,49 @@ async def fuzz_buckets(dut):
         body, ref_body = await run_window(dut, ref, schedule)
         assert body == ref_body, f"fuzz window {w}: {body.hex()} != {ref_body.hex()}"
     dut._log.info("fuzz_buckets: 3 random windows, cert bodies match")
+
+
+@cocotb.test()
+async def tick_burst(dut):
+    """A1 fix: N bucket_ticks fired back-to-back (faster than a ~280-cycle
+    boundary) must all be queued — none lost — so the cert still emerges correct.
+    With the old single-latch this hung (lost ticks → nb never reached N)."""
+    ref = await boot(dut)
+    box = {}
+    cert_collector(dut, box)
+    for _ in range(N):                       # no wait_idle: deliberate burst
+        dut.bucket_tick.value = 1
+        await RisingEdge(dut.clk)
+        dut.bucket_tick.value = 0
+        ref.on_bucket_boundary()
+    while "body" not in box:
+        await RisingEdge(dut.clk)
+    assert dut.tick_err.value == 0, "tick_err set (queue overflowed unexpectedly)"
+    assert box["body"] == ref.on_second()[:-W.TAG]
+    dut._log.info("tick_burst: N back-to-back ticks all queued, cert body matches")
+
+
+@cocotb.test()
+async def rid_zero(dut):
+    """request_id == 0 accepted as the first packet (have-flag == model's -1),
+    then a second id-0 dropped (0 <= last)."""
+    ref = await boot(dut)
+    key = W.H(b"k")
+    p0 = W.output_packet(0, W.encrypt(key, b"out", W.tokens_to_bytes([1])))
+    p1 = W.output_packet(0, W.encrypt(key, b"out", W.tokens_to_bytes([2])))  # 0<=0 -> drop
+    body, ref_body = await run_window(dut, ref, {0: [("out", p0), ("out", p1)]})
+    assert body == ref_body
+    dut._log.info("rid_zero: id 0 first accepted, repeat dropped, body matches")
+
+
+@cocotb.test()
+async def last_in_persist(dut):
+    """last_in is session-wide: a lower in-id in a LATER bucket is dropped
+    (whereas last_out resets each bucket)."""
+    ref = await boot(dut)
+    key = W.H(b"k")
+    a = W.input_packet(5, key, W.encrypt(key, b"in", W.tokens_to_bytes([1])))
+    b = W.input_packet(3, key, W.encrypt(key, b"in", W.tokens_to_bytes([2])))  # 3<=5 across buckets
+    body, ref_body = await run_window(dut, ref, {0: [("in", a)], 2: [("in", b)]})
+    assert body == ref_body
+    dut._log.info("last_in_persist: stale in-id across buckets dropped, body matches")

@@ -38,7 +38,11 @@ module interlock_core #(
     output wire [7:0]   cert_data,
     output wire         cert_last,
     // high when not folding/finalizing/emitting — safe to pulse bucket_tick
-    output wire         idle
+    output wire         idle,
+    // sticky: a bucket_tick was dropped because too many were pending (misuse —
+    // boundaries take ~280 cycles, real ticks are 1 ms apart). Certs are invalid
+    // once set; for observability/integration, not exercised on the normal path.
+    output wire         tick_err
 );
     localparam [63:0] VERSION = 64'h696c6f636b2d7635;   // "ilock-v5"
     localparam [63:0] IID_W = IID;
@@ -50,8 +54,10 @@ module interlock_core #(
                C_FIN_IN=9, C_WAIT_IN=10, C_FIN_OUT=11, C_WAIT_OUT=12,
                C_EMIT=13, C_REINIT=14;
 
+    localparam [3:0] TICK_MAX = 4'hF;
     reg [3:0]   state;
-    reg         tick_pending;
+    reg [3:0]   tick_cnt;          // pending bucket ticks (queued, not lost)
+    reg         tick_ovf;          // sticky: queue saturated, a tick was dropped
     reg         bd;                // direction being processed at a boundary
     reg [31:0]  nb;                // buckets closed this window
     reg [63:0]  bucket, bstart;
@@ -114,18 +120,22 @@ module interlock_core #(
     wire [31:0] used_w   = pr_dir ? used_out    : used_in;
     wire bad_len = (pr_length != pr_cipher_len) || (pr_length > SMAX);
     wire bad_id  = have_w && (pr_request_id <= last_w);
-    wire bad_cap = (used_w + pktlen_w) > CAP;
+    wire bad_cap = ({1'b0, used_w} + {1'b0, pktlen_w}) > CAP;   // 33-bit: no wrap
     wire accept_w = !bad_len && !bad_id && !bad_cap;
+
+    // a queued tick is consumed only when IDLE and not starting a packet fold
+    wire consume_tick = (state==IDLE) && !pr_rec_valid && (tick_cnt != 4'd0);
 
     // --- cert body output ---
     assign cert_valid = (state==C_EMIT);
     assign cert_data  = cbuf[863:856];
     assign cert_last  = (state==C_EMIT) && (ccnt==8'd1);
     assign idle       = (state==IDLE);
+    assign tick_err   = tick_ovf;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state<=BOOT; pkt_done<=0; pkt_accepted<=0; tick_pending<=0;
+            state<=BOOT; pkt_done<=0; pkt_accepted<=0; tick_cnt<=0; tick_ovf<=0;
             nb<=0; bucket<=0; used_in<=0; used_out<=0;
             last_in_id<=0; last_out_id<=0; have_in<=0; have_out<=0; nonce_r<=0;
             bin_init<=0; bin_fin<=0; bout_init<=0; bout_fin<=0;
@@ -135,7 +145,6 @@ module interlock_core #(
             bin_init<=0; bin_fin<=0; bout_init<=0; bout_fin<=0;
             win_i_init<=0; win_i_fin<=0; win_o_init<=0; win_o_fin<=0;
             if (nonce_valid) nonce_r<=nonce;
-            if (bucket_tick) tick_pending<=1;
 
             case (state)
                 BOOT: begin
@@ -151,8 +160,8 @@ module interlock_core #(
                             else              begin used_out<=used_out+pktlen_w; last_out_id<=pr_request_id; have_out<=1; end
                             state<=FOLD;
                         end else state<=DROP;
-                    end else if (tick_pending) begin
-                        tick_pending<=0; bd<=0; state<=B_FIN;
+                    end else if (tick_cnt != 4'd0) begin
+                        bd<=0; state<=B_FIN;        // tick_cnt decremented below
                     end
 
                 FOLD:
@@ -199,7 +208,16 @@ module interlock_core #(
                         else begin cbuf<=cbuf<<8; ccnt<=ccnt-1; end
                     end
                 C_REINIT: begin win_i_init<=1; win_o_init<=1; nb<=0; state<=IDLE; end
+                default: state<=IDLE;            // SEU/X guard: recover to a safe state
             endcase
+
+            // bucket_tick accounting: queue ticks; resolve simultaneous arrive+consume
+            if (bucket_tick && !consume_tick) begin
+                if (tick_cnt == TICK_MAX) tick_ovf <= 1'b1;
+                else                      tick_cnt <= tick_cnt + 4'd1;
+            end else if (!bucket_tick && consume_tick) begin
+                tick_cnt <= tick_cnt - 4'd1;
+            end
         end
     end
 

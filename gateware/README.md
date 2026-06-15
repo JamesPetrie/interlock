@@ -15,8 +15,9 @@ the full 140-byte certificate with no change to the conformance method.
 | G0 | Vendor secworks SHA-256 core | ✅ green vs NIST + hashlib fuzz |
 | G1 | `sha256_stream` (byte-stream → auto-pad → digest) | ✅ green vs hashlib (empty/boundaries/fuzz/gappy/reuse) |
 | G2 | `pkt_record` (H(ct) → packet_hash → record) | ✅ green vs `wire.record()` |
-| G3–G5 | `interlock_core` (drop rules, bucket+window fold, cert body) | ✅ 5 tests green; cert body byte-identical to the model |
+| G3–G5 | `interlock_core` (drop rules, bucket+window fold, cert body) | ✅ 8 tests green; cert body byte-identical to the model |
 | — | Verilator `--lint-only -Wall` | ✅ clean (catches synth-vs-sim issues) |
+| — | Independent conformance audit (A-G5) | ✅ no cert discrepancy; A1 (tick queue) + A2 (33-bit cap) fixed, gaps now tested |
 | G7 | HMAC FSM → full 140-byte cert | ⬜ next |
 | G6 | FPGA integration + on-hardware gate | ⬜ scoped (see below) |
 
