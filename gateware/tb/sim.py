@@ -29,6 +29,9 @@ SUITES = {
     # G1: the streaming wrapper (byte-stream -> padded blocks -> digest)
     "sha256_stream": dict(toplevel="sha256_stream", module="test_sha256_stream",
                           sources=SECWORKS + [CORE / "sha256_stream.v"]),
+    # G2: per-packet record path (H(ct) -> packet_hash -> record)
+    "pkt_record": dict(toplevel="pkt_record", module="test_pkt_record",
+                       sources=SECWORKS + [CORE / "sha256_stream.v", CORE / "pkt_record.v"]),
 }
 
 
