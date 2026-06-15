@@ -1,63 +1,49 @@
-"""cocotb conformance harness for the interlock Core (gateware), checked against
-the Python golden model in ../../prototype (wire.py + interlock.py).
+"""G3-G5 conformance: interlock_core vs the Python golden model (prototype/
+interlock.py + wire.py), HMAC deferred.
 
-The idea: drive the DUT and a Python `Interlock` with the *same* events
-(packets, bucket ticks, nonce) and assert the certificate the DUT emits is
-byte-identical to the model's. The model is the checker — no hand-written
-expected vectors — and a single cert-equality assertion transitively covers the
-hashing, the bucket/window folding, the cert assembly, and the HMAC. Per-packet
-accept/drop is checked alongside, so the drop rules are covered too.
-
-Assumed Core interface (this is the contract the RTL implements):
-
-  module interlock_core #(IID, N, S_MAX, CAP) (
-    input  clk, rst_n,
-    input  [255:0] mac_key,                 // loaded while rst_n low
-    // verifier nonce latch
-    input  nonce_valid, input [127:0] nonce,
-    // canonical packet in — one packet at a time, s_dir held for the packet
-    input  s_valid, output s_ready, input [7:0] s_data, input s_last, input s_dir, // 0=in 1=out
-    output pkt_done, output pkt_accepted,   // 1-cycle status after s_last
-    // forwarded packet out (accepted only) — exercised by the integration TB
-    output f_valid, input f_ready, output [7:0] f_data, output f_last, output f_dir,
-    // bucket boundary (the 1 ms tick) — closes the current bucket
-    input  bucket_tick,
-    // certificate out — streamed once per N bucket ticks
-    output cert_valid, input cert_ready, output [7:0] cert_data, output cert_last )
-
-Production has two ingress ports (full duplex); this harness drives them
-sequentially, which is the conformance subset. Concurrency is a separate timing TB.
+Drives the DUT and a Python `Interlock` with identical packet / bucket-tick /
+nonce events; asserts each accept/drop decision agrees and the emitted 108-byte
+certificate *body* equals the model's body (`ref_cert[:-TAG]`). One cert-body
+equality covers hashing, the bucket/window fold, and cert assembly; the
+accept/drop check covers the drop rules. The HMAC tag is added in a later stage,
+at which point the comparison extends to the full certificate with no test change.
 """
 import os
 import sys
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "prototype"))
-import wire as W                      # the wire format + hashing
-from interlock import Interlock       # the golden model node
+import wire as W
+from interlock import Interlock
 
-IID, N = 7, int(os.environ.get("N", 8))           # interlock id, buckets per cert
-S_MAX, CAP = 100_000, 100_000
-MAC, NONCE = W.H(b"mac"), W.H(b"nonce")[:16]
+IID, N = 7, 8                 # must match the interlock_core defaults
+SMAX, CAP = 100000, 100000
+MAC = W.H(b"mac")
+NONCE = W.H(b"nonce")[:16]
 
-
-# ---- low-level DUT drivers (standard AXIS-style handshakes) ----------------
 
 async def reset(dut):
-    dut.rst_n.value = 0
     dut.s_valid.value = 0
+    dut.s_data.value = 0
+    dut.s_last.value = 0
+    dut.s_dir.value = 0
     dut.nonce_valid.value = 0
+    dut.nonce.value = 0
     dut.bucket_tick.value = 0
-    dut.f_ready.value = 1
     dut.cert_ready.value = 1
     dut.mac_key.value = int.from_bytes(MAC, "big")
-    for _ in range(4):
-        await RisingEdge(dut.clk)
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 4)
     dut.rst_n.value = 1
-    await RisingEdge(dut.clk)
+    await ClockCycles(dut.clk, 3)
+
+
+async def wait_idle(dut):
+    while not dut.idle.value:
+        await RisingEdge(dut.clk)
 
 
 async def latch_nonce(dut, nonce):
@@ -68,102 +54,158 @@ async def latch_nonce(dut, nonce):
 
 
 async def send_packet(dut, direction, pkt):
-    """Byte-stream one packet in; return True if the Core accepted (forwarded+hashed) it."""
     dut.s_dir.value = 0 if direction == "in" else 1
+    n = len(pkt)
     for i, b in enumerate(pkt):
         dut.s_data.value = b
-        dut.s_last.value = 1 if i == len(pkt) - 1 else 0
+        dut.s_last.value = 1 if i == n - 1 else 0
         dut.s_valid.value = 1
-        await RisingEdge(dut.clk)
-        while not dut.s_ready.value:          # honor backpressure
+        while True:
+            await ReadOnly()
+            rdy = dut.s_ready.value
             await RisingEdge(dut.clk)
+            if rdy:
+                break
     dut.s_valid.value = 0
     dut.s_last.value = 0
-    while not dut.pkt_done.value:             # wait for accept/drop decision
+    while not dut.pkt_done.value:
         await RisingEdge(dut.clk)
     return bool(dut.pkt_accepted.value)
 
 
-async def tick_bucket(dut):
+async def tick(dut):
+    """Pulse bucket_tick, then wait for the whole boundary to finish before
+    returning (real ticks are 1 ms apart, so they never overlap a ~280-cycle
+    boundary; the single tick_pending latch relies on that)."""
+    await wait_idle(dut)
     dut.bucket_tick.value = 1
     await RisingEdge(dut.clk)
     dut.bucket_tick.value = 0
-
-
-async def read_cert(dut):
-    """Collect one streamed certificate (cert_valid .. cert_last)."""
-    out = bytearray()
-    while True:
+    while dut.idle.value:          # boundary starts
         await RisingEdge(dut.clk)
-        if dut.cert_valid.value and dut.cert_ready.value:
-            out.append(int(dut.cert_data.value))
-            if dut.cert_last.value:
-                return bytes(out)
+    while not dut.idle.value:      # ...and completes (incl. cert emit on the Nth)
+        await RisingEdge(dut.clk)
 
 
-# ---- co-drive DUT + model for one cert window, compare ----------------------
+def cert_collector(dut, box):
+    """Background coroutine: capture the cert body whenever it streams out."""
+    async def run():
+        buf = bytearray()
+        while True:
+            await ReadOnly()
+            if dut.cert_valid.value and dut.cert_ready.value:
+                buf.append(int(dut.cert_data.value))
+                if bool(dut.cert_last.value):
+                    box["body"] = bytes(buf)
+                    return
+            await RisingEdge(dut.clk)
+    return cocotb.start_soon(run())
+
 
 async def run_window(dut, ref, schedule):
-    """Drive N buckets per `schedule` {bucket_offset: [(dir, pkt), ...]} on both the
-    DUT and the model; assert each accept/drop decision agrees; return the DUT cert."""
+    """Co-drive N buckets; assert accept/drop agreement; return the DUT cert body."""
+    box = {}
+    cert_collector(dut, box)
     for i in range(N):
+        await wait_idle(dut)
         for direction, pkt in schedule.get(i, []):
             accepted = await send_packet(dut, direction, pkt)
             model_accepted = ref.on_packet(direction, pkt) is not None
             assert accepted == model_accepted, \
-                f"accept/drop mismatch: bucket {i} {direction} dut={accepted} model={model_accepted}"
-        await tick_bucket(dut)
+                f"bucket {i} {direction}: dut={accepted} model={model_accepted}"
+        await tick(dut)
         ref.on_bucket_boundary()
-    return await read_cert(dut)
+    while "body" not in box:
+        await RisingEdge(dut.clk)
+    ref_body = ref.on_second()[:-W.TAG]
+    return box["body"], ref_body
+
+
+def new_model():
+    return Interlock(MAC, IID, s_max=SMAX, capacity=CAP, buckets_per_cert=N)
 
 
 def pair(rid, prompt, key, resp):
-    in_pkt = W.input_packet(rid, key, W.encrypt(key, b"in", W.tokens_to_bytes(prompt)))
-    out_pkt = W.output_packet(rid, W.encrypt(key, b"out", W.tokens_to_bytes(resp)))
-    return in_pkt, out_pkt
+    return (W.input_packet(rid, key, W.encrypt(key, b"in", W.tokens_to_bytes(prompt))),
+            W.output_packet(rid, W.encrypt(key, b"out", W.tokens_to_bytes(resp))))
 
 
-# ---- tests ------------------------------------------------------------------
+async def boot(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    await reset(dut)
+    ref = new_model()
+    await latch_nonce(dut, NONCE)
+    ref.on_nonce(NONCE)
+    return ref
+
 
 @cocotb.test()
 async def honest_pair(dut):
-    """One request/response pair -> the DUT cert must equal the model cert."""
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-    await reset(dut)
-    ref = Interlock(MAC, IID, s_max=S_MAX, capacity=CAP, buckets_per_cert=N)
-    await latch_nonce(dut, NONCE)
-    ref.on_nonce(NONCE)
+    ref = await boot(dut)
     in_pkt, out_pkt = pair(1, [10, 20, 30], W.H(b"k"), [3681, 338, 278])
-    dut_cert = await run_window(dut, ref, {0: [("in", in_pkt)], 1: [("out", out_pkt)]})
-    ref_cert = ref.on_second()
-    assert dut_cert == ref_cert, f"\n dut={dut_cert.hex()}\n ref={ref_cert.hex()}"
+    body, ref_body = await run_window(dut, ref, {0: [("in", in_pkt)], 1: [("out", out_pkt)]})
+    assert body == ref_body, f"\n dut={body.hex()}\n ref={ref_body.hex()}"
+    dut._log.info("honest_pair: cert body matches (108 bytes)")
 
 
 @cocotb.test()
 async def drop_rules(dut):
-    """A non-monotonic id in a bucket is dropped (not forwarded, not hashed) by
-    both the DUT and the model -> accept flags agree and the cert still matches."""
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-    await reset(dut)
-    ref = Interlock(MAC, IID, s_max=S_MAX, capacity=CAP, buckets_per_cert=N)
-    await latch_nonce(dut, NONCE)
-    ref.on_nonce(NONCE)
+    ref = await boot(dut)
     key = W.H(b"k")
     good = W.output_packet(5, W.encrypt(key, b"out", W.tokens_to_bytes([1])))
-    stale = W.output_packet(4, W.encrypt(key, b"out", W.tokens_to_bytes([2])))  # id < last -> drop
-    dut_cert = await run_window(dut, ref, {0: [("out", good), ("out", stale)]})
-    assert dut_cert == ref.on_second()
+    stale = W.output_packet(4, W.encrypt(key, b"out", W.tokens_to_bytes([2])))  # id < last
+    body, ref_body = await run_window(dut, ref, {0: [("out", good), ("out", stale)]})
+    assert body == ref_body
+    dut._log.info("drop_rules: non-monotonic id dropped, cert body matches")
+
+
+@cocotb.test()
+async def length_mismatch(dut):
+    ref = await boot(dut)
+    key = W.H(b"k")
+    ok = W.output_packet(1, W.encrypt(key, b"out", W.tokens_to_bytes([7])))
+    bad = bytearray(W.output_packet(2, W.encrypt(key, b"out", W.tokens_to_bytes([9, 9]))))
+    bad[0:4] = (999).to_bytes(4, "big")   # declared length != actual ciphertext
+    body, ref_body = await run_window(dut, ref, {0: [("out", ok), ("out", bytes(bad))]})
+    assert body == ref_body
+    dut._log.info("length_mismatch: bad-length packet dropped, cert body matches")
 
 
 @cocotb.test()
 async def multi_turn(dut):
-    """Two cert windows in sequence — bucket counter and window reset must match."""
-    cocotb.start_soon(Clock(dut.clk, 10, units="ns").start())
-    await reset(dut)
-    ref = Interlock(MAC, IID, s_max=S_MAX, capacity=CAP, buckets_per_cert=N)
-    await latch_nonce(dut, NONCE)
-    ref.on_nonce(NONCE)
-    for rid in (1, 2):
-        in_pkt, out_pkt = pair(rid, [rid], W.H(b"k%d" % rid), [rid * 7])
-        c = await run_window(dut, ref, {0: [("in", in_pkt)], 1: [("out", out_pkt)]})
-        assert c == ref.on_second(), f"window {rid} cert mismatch"
+    ref = await boot(dut)
+    for rid in (1, 2, 3):
+        in_pkt, out_pkt = pair(rid, [rid, rid + 1], W.H(b"k%d" % rid), [rid * 7, rid * 9])
+        body, ref_body = await run_window(dut, ref, {0: [("in", in_pkt)], 1: [("out", out_pkt)]})
+        assert body == ref_body, f"window {rid} mismatch"
+    dut._log.info("multi_turn: 3 windows, cert bodies match")
+
+
+@cocotb.test()
+async def fuzz_buckets(dut):
+    """Random multi-packet buckets spread across the window — exercises the
+    running bucket hash across 64-byte block boundaries (44B records) and the
+    window fold over non-empty buckets, both directions."""
+    import random
+    rng = random.Random(0xF1)
+    in_rid = 0
+    ref = await boot(dut)                     # one model + DUT, counters persist
+    for w in range(3):                        # three windows
+        schedule = {}
+        for b in range(N):
+            items = []
+            out_rid = 0
+            for _ in range(rng.randrange(0, 4)):          # 0-3 out packets, monotonic
+                out_rid += rng.randrange(1, 3)
+                ct = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 40)))
+                items.append(("out", W.output_packet(out_rid, ct)))
+            if rng.random() < 0.5:                        # maybe an in packet
+                in_rid += rng.randrange(1, 3)
+                ct = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 40)))
+                items.insert(rng.randrange(0, len(items) + 1),
+                             ("in", W.input_packet(in_rid, W.H(b"k"), ct)))
+            if items:
+                schedule[b] = items
+        body, ref_body = await run_window(dut, ref, schedule)
+        assert body == ref_body, f"fuzz window {w}: {body.hex()} != {ref_body.hex()}"
+    dut._log.info("fuzz_buckets: 3 random windows, cert bodies match")

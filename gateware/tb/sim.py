@@ -32,6 +32,10 @@ SUITES = {
     # G2: per-packet record path (H(ct) -> packet_hash -> record)
     "pkt_record": dict(toplevel="pkt_record", module="test_pkt_record",
                        sources=SECWORKS + [CORE / "sha256_stream.v", CORE / "pkt_record.v"]),
+    # G3-G5: the full Core vs the Python golden model (HMAC deferred)
+    "interlock_core": dict(toplevel="interlock_core", module="test_interlock_core",
+                           sources=SECWORKS + [CORE / "sha256_stream.v",
+                                               CORE / "pkt_record.v", CORE / "interlock_core.v"]),
 }
 
 
@@ -40,9 +44,10 @@ def main():
         sys.exit(f"usage: sim.py <{'|'.join(SUITES)}>")
     s = SUITES[sys.argv[1]]
     from cocotb_tools.runner import get_runner
+    bargs = ["-g2012"] + (["-DSIMDBG"] if os.environ.get("SIMDBG") else [])
     runner = get_runner("icarus")
     runner.build(sources=[str(p) for p in s["sources"]],
-                 hdl_toplevel=s["toplevel"], always=True, build_args=["-g2012"],
+                 hdl_toplevel=s["toplevel"], always=True, build_args=bargs,
                  timescale=("1ns", "1ps"),
                  build_dir=str(TB / "sim_build" / sys.argv[1]))
     runner.test(hdl_toplevel=s["toplevel"], test_module=s["module"],
