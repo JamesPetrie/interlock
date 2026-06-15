@@ -42,6 +42,9 @@ SUITES = {
     # G6: 32-bit AXIS (eth_deframe payload) -> Core byte stream adapter
     "axis32_to_bytes": dict(toplevel="axis32_to_bytes", module="test_axis32_to_bytes",
                             sources=[CORE / "axis32_to_bytes.v"]),
+    # debug: read-only UART telemetry block (counters / sticky flags / probe mux)
+    "dbg_telemetry": dict(toplevel="dbg_telemetry", module="test_dbg_telemetry",
+                          sources=[CORE / "dbg_telemetry.v"]),
 }
 
 
