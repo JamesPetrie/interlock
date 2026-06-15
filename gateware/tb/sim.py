@@ -45,6 +45,9 @@ SUITES = {
     # debug: read-only UART telemetry block (counters / sticky flags / probe mux)
     "dbg_telemetry": dict(toplevel="dbg_telemetry", module="test_dbg_telemetry",
                           sources=[CORE / "dbg_telemetry.v"]),
+    # debug: CPU-free UART transmitter (DIV small for fast sim)
+    "uart_tx": dict(toplevel="uart_tx", module="test_uart_tx",
+                    sources=[CORE / "uart_tx.v"], parameters={"DIV": 8}),
 }
 
 
@@ -57,6 +60,7 @@ def main():
     runner = get_runner("icarus")
     runner.build(sources=[str(p) for p in s["sources"]],
                  hdl_toplevel=s["toplevel"], always=True, build_args=bargs,
+                 parameters=s.get("parameters", {}),
                  timescale=("1ns", "1ps"),
                  build_dir=str(TB / "sim_build" / sys.argv[1]))
     runner.test(hdl_toplevel=s["toplevel"], test_module=s["module"],
