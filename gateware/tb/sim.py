@@ -36,6 +36,9 @@ SUITES = {
     "interlock_core": dict(toplevel="interlock_core", module="test_interlock_core",
                            sources=SECWORKS + [CORE / "sha256_stream.v",
                                                CORE / "pkt_record.v", CORE / "interlock_core.v"]),
+    # G7: HMAC-SHA256 FSM over sha256_stream
+    "hmac_sha256": dict(toplevel="hmac_sha256", module="test_hmac_sha256",
+                        sources=SECWORKS + [CORE / "sha256_stream.v", CORE / "hmac_sha256.v"]),
 }
 
 
