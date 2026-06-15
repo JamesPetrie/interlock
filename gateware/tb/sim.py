@@ -39,6 +39,9 @@ SUITES = {
     # G7: HMAC-SHA256 FSM over sha256_stream
     "hmac_sha256": dict(toplevel="hmac_sha256", module="test_hmac_sha256",
                         sources=SECWORKS + [CORE / "sha256_stream.v", CORE / "hmac_sha256.v"]),
+    # G6: 32-bit AXIS (eth_deframe payload) -> Core byte stream adapter
+    "axis32_to_bytes": dict(toplevel="axis32_to_bytes", module="test_axis32_to_bytes",
+                            sources=[CORE / "axis32_to_bytes.v"]),
 }
 
 
