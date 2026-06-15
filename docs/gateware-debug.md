@@ -4,28 +4,40 @@ Goal: rich on-chip status over UART so issues can be diagnosed at runtime,
 **without** a build→flash→bisect cycle per question — while keeping **UART off
 the datapath** (the cert/data path stays in fabric; UART is a read-only observer).
 
-## Architecture
+## Architecture — CPU-free (no soft CPU, no firmware), built + verified
 
 ```
- datapath signals ──(read-only taps)──▶ dbg_telemetry ──APB──▶ MiV ──UART──▶ host
-                                         (counters,                (poll + print
-                                          sticky flags,             + command loop)
-                                          probe mux)
+ datapath signals ──(read-only taps)──▶ dbg_telemetry ──▶ telemetry_uart ──▶ uart_tx ──▶ host
+                                         (counters,         (dumper FSM:        (8N1
+                                          sticky flags,      walk regs ->        serial)
+                                          probe mux)         ASCII hex)
 ```
+
+All in fabric — **no MiV, no firmware** (smaller TCB, no SoftConsole/hex-rebake
+loop, faster iteration), and **independent of the Ethernet datapath** so it keeps
+reporting even when forwarding is broken (the failure we chase). The MiV *is*
+currently in the build (for PHY/MDIO bring-up + the old MAC-stat firmware), but
+telemetry doesn't need it; fully deleting the MiV is a follow-on once PHY init
+moves to a fabric MDIO FSM.
 
 - **`dbg_telemetry`** (`gateware/src/core/dbg_telemetry.v`, cocotb-verified):
   event **counters**, sticky **event flags** (write-1-to-clear), and a
-  runtime-selectable **probe mux** — `probe_sel` (written over UART→MiV→APB)
-  repoints a 32-bit `probe_val` at any wired-in internal bus. Single clock,
-  read-only taps; it cannot perturb the datapath.
-- **MiV + CoreUARTapb** (already in the design): firmware polls the registers and
-  prints a status line each loop, and reads UART input for **commands**
-  (set `probe_sel`, clear sticky flags, change verbosity, dump a snapshot). Because
-  behavior is command-driven, you change *what you observe* at runtime — no reflash.
+  runtime-selectable **probe mux** — `probe_sel` repoints a 32-bit `probe_val` at
+  any wired-in internal bus. Single clock, read-only taps; cannot perturb the datapath.
+- **`telemetry_uart`** (dumper FSM, verified): sweeps the registers, drives
+  `probe_sel` itself to dump every probe lane, emits ASCII-hex fields + CRLF.
+- **`uart_tx`** (8N1, verified) → serial line on the FlashPro UART.
+- **`telemetry_top`** wires the three; end-to-end cocotb test parses a sweep and
+  confirms the reported counters/flags/probes.
+
+(A MiV+firmware variant is also possible — APB-map `dbg_telemetry` and poll it —
+if you later want an interactive command interface. Not needed for status dumps.)
 
 **The one limit:** you can only observe what you wired in. So wire a *generous*
 set into the counters/flags and a *wide* probe mux up front; then a rebuild is
-needed only for a signal nobody anticipated.
+needed only for a signal nobody anticipated. (The dumper emits a fixed format, so
+changing the *format* needs a rebuild — but the probe mux already covers changing
+*which signals* you see, by dumping all lanes every sweep.)
 
 ## What to expose for the interlock datapath
 
@@ -45,15 +57,16 @@ Per the datapath constraint: the 140-byte certificate is framed back out through
 `eth_reframe` as its own frame (custom 802.3 LENGTH / ethertype) and captured by
 the host raw-socket test. UART never carries the cert — it only reports status.
 
-## Integration plan
+## Integration plan (CPU-free)
 
-1. Wrap `dbg_telemetry` in a small APB slave; hang it on the MiV's `CoreAPB3` bus
-   in `top.tcl` (next to the existing UART/CoreTSE slaves), pick a base address.
-2. Wire the datapath taps (counters/flags/probe lanes above) into it.
-3. Extend `main.c`: poll + print the status line; add the UART command parser
-   (`probe_sel`, clear, verbosity).
+1. Instantiate `telemetry_top` in `top.tcl` with `DIV = sys_clk_hz / 115200`.
+2. Wire the datapath taps (counters/flags/probe lanes above) into `evt` /
+   `flag_set` / `probe_in`.
+3. Route `txd` to the FlashPro UART pin (the pin `CoreUARTapb` drives today —
+   repurpose it, or add a spare). No APB, no firmware.
 4. Rebuild → a `deframe-fix` image **with telemetry**, so the first forward/cert
-   test on silicon reports exactly where frames stop if it misbehaves.
+   test on silicon reports exactly where frames stop if it misbehaves. Read it on
+   the host with `cat /dev/ttyUSB0` (115200) inside the flash VM.
 
 Keep all debug RTL simple (plain counters/regs/mux, single clock, no packages or
 multi-dim arrays) so it adds no synth-vs-sim risk of its own.

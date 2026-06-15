@@ -48,6 +48,11 @@ SUITES = {
     # debug: CPU-free UART transmitter (DIV small for fast sim)
     "uart_tx": dict(toplevel="uart_tx", module="test_uart_tx",
                     sources=[CORE / "uart_tx.v"], parameters={"DIV": 8}),
+    # debug: full CPU-free telemetry chain (dbg_telemetry -> dumper -> uart_tx)
+    "telemetry_top": dict(toplevel="telemetry_top", module="test_telemetry_top",
+                          sources=[CORE / "dbg_telemetry.v", CORE / "telemetry_uart.v",
+                                   CORE / "uart_tx.v", CORE / "telemetry_top.v"],
+                          parameters={"DIV": 4}),
 }
 
 
