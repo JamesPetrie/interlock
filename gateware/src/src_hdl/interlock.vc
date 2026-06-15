@@ -1,2 +1,5 @@
-./fcs_recalc.sv
+./eth_pkg.sv
+./crc32_pkg.sv
+./eth_deframe.sv
+./eth_reframe.sv
 ./fabric_bridge.sv

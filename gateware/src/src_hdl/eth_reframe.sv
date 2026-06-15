@@ -51,7 +51,7 @@ module eth_reframe #(
 
   // PAD octets needed to bring DATA up to the minimum frame size
   function automatic len_t pad_len(input len_t data_bytes);
-    return (data_bytes < ETH_DATA_MIN) ? len_t'(ETH_DATA_MIN - data_bytes) : '0;
+    return (int'(data_bytes) < ETH_DATA_MIN) ? (len_t'(ETH_DATA_MIN) - data_bytes) : '0;
   endfunction
 
   // ------------------------------------------------------------------
@@ -171,8 +171,8 @@ module eth_reframe #(
             fed      <= len_t'(ETH_HDR_BYTES);
             sent     <= '0;
             crc_rem  <= CRC32_INIT;
-            data_end <= ETH_HDR_BYTES + tuser;
-            pad_end  <= ETH_HDR_BYTES + tuser + pad_len(tuser);
+            data_end <= len_t'(ETH_HDR_BYTES) + tuser;
+            pad_end  <= len_t'(ETH_HDR_BYTES) + tuser + pad_len(tuser);
             state    <= F_RUN;
           end
         end
@@ -198,7 +198,7 @@ module eth_reframe #(
         F_FOLD_PEN: begin
           // one-cycle bubble: fold the PEN word's body bytes (a whole word
           // when aligned) so the FCS is registered before it is emitted
-          crc_rem <= crc_fold(crc_rem, buffer[31:0], !tail_bytes ? 3'd4 : 3'(tail_bytes));
+          crc_rem <= crc_fold(crc_rem, buffer[31:0], (tail_bytes == '0) ? 3'd4 : 3'(tail_bytes));
           state   <= F_EMIT_PEN;
         end
 
