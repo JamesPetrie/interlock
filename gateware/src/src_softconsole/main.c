@@ -1087,5 +1087,30 @@ int main(void)
         uart_print("[dbg3] dfEmit=");    uart_print_hex16((uint16_t)(d8 >> 16));
         uart_print(" lastFwdLen=");      uart_print_hex16((uint16_t)d8);
         uart_print("\r\n");
+
+        /* [dbg4]/[dbg5] interlock_tap (Phase A: canon_core in the loop). Chain:
+         *   bytesFed = bytes pushed into the core; pktDone/pktAcc = pkts finished/accepted
+         *   prLen    = declared length the core parsed (garbage -> byte-order/format wrong)
+         *   certSeq  = certs emitted; certChk = cert fold-checksum (== sim's => byte-exact)
+         *   cert[0:7] should read "ilock-v5" (696c6f636b2d7635) = cert structure OK
+         *   tickErr  = bucket-tick queue overflow (should be 0) */
+        uint32_t e9 = mac_rd(0x60004000, 0x24);   /* certChk        */
+        uint32_t e10= mac_rd(0x60004000, 0x28);   /* cert b0-3      */
+        uint32_t e11= mac_rd(0x60004000, 0x2C);   /* cert b4-7      */
+        uint32_t e12= mac_rd(0x60004000, 0x30);   /* prLength       */
+        uint32_t e13= mac_rd(0x60004000, 0x34);   /* {certSeq,bytesFed} */
+        uint32_t e14= mac_rd(0x60004000, 0x38);   /* {pktAcc,pktDone}   */
+        uint32_t e15= mac_rd(0x60004000, 0x3C);   /* flags          */
+        uart_print("[dbg4] bytesFed="); uart_print_hex16((uint16_t)e13);
+        uart_print(" pktDone=");        uart_print_hex16((uint16_t)e14);
+        uart_print(" pktAcc=");         uart_print_hex16((uint16_t)(e14 >> 16));
+        uart_print(" prLen=");          uart_print_hex32(e12);
+        uart_print(" tickErr=");        uart_print_dec((e15 >> 1) & 1);
+        uart_print(" coreIdle=");       uart_print_dec(e15 & 1);
+        uart_print("\r\n");
+        uart_print("[dbg5] certSeq=");  uart_print_hex16((uint16_t)(e13 >> 16));
+        uart_print(" certChk=");        uart_print_hex32(e9);
+        uart_print(" cert0_7=");        uart_print_hex32(e10); uart_print_hex32(e11);
+        uart_print("\r\n");
     }
 }

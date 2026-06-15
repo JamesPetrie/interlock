@@ -79,7 +79,19 @@ module fabric_bridge (
   output wire [15:0] dbg_df_trunc_count, // conforming frames ended short (zero-filled)
   output wire [15:0] dbg_rf_tuser_at_sof, // length reframe sampled at the 1st SOF (sticky)
   output wire [15:0] dbg_df_emit_frames,  // frames deframe emitted (passed reject)
-  output wire [15:0] dbg_rf_last_fwd_len  // length of last frame reframe completed
+  output wire [15:0] dbg_rf_last_fwd_len, // length of last frame reframe completed
+
+  // ---- interlock_tap probes (request path; the [dbg4] accounting chain) ----
+  output wire        dbg_il_idle,
+  output wire        dbg_il_tick_err,
+  output wire [15:0] dbg_il_pkt_done,
+  output wire [15:0] dbg_il_pkt_acc,
+  output wire [15:0] dbg_il_bytes_fed,
+  output wire [31:0] dbg_il_pr_length,
+  output wire [15:0] dbg_il_cert_seq,
+  output wire [31:0] dbg_il_cert_chk,
+  output wire [31:0] dbg_il_cert_b0_3,
+  output wire [31:0] dbg_il_cert_b4_7
 );
 
   // Each direction is sanitized at the Ethernet layer:
@@ -105,10 +117,23 @@ module fabric_bridge (
   // ====================================================================
   // Requests: CORETSE_0 MAC-RX -> deframe/reframe -> CORETSE_1 MAC-TX
   // ====================================================================
-  wire        req_tvalid, req_tready, req_tlast;
-  wire [31:0] req_tdata;
-  wire [3:0]  req_tkeep;
+  // deframe -> interlock_tap -> reframe (tap spliced inline on the request path)
+  wire        dq_tvalid, dq_tready, dq_tlast;   // deframe -> tap
+  wire        rq_tvalid, rq_tready, rq_tlast;   // tap -> reframe
+  wire [31:0] dq_tdata, rq_tdata;
+  wire [3:0]  dq_tkeep, rq_tkeep;
   wire [15:0] req_len;
+
+  // bucket-tick timer (PROTOTYPE): ~1 ms at 80 MHz. The cocotb cert test drives
+  // the tap's bucket_tick directly, so this cadence only matters on silicon.
+  localparam int TICK_DIV = 80000;
+  reg [16:0] tick_cnt;
+  reg        tick_pulse;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin tick_cnt <= '0; tick_pulse <= 1'b0; end
+    else if (tick_cnt >= TICK_DIV-1) begin tick_cnt <= '0; tick_pulse <= 1'b1; end
+    else begin tick_cnt <= tick_cnt + 1'b1; tick_pulse <= 1'b0; end
+  end
 
   eth_deframe deframe_req (
     .clk           (clk),
@@ -119,11 +144,11 @@ module fabric_bridge (
     .in_eof        (tse0_mrx_eof),
     .in_dat        (tse0_mrx_dat),
     .in_bytevalid  (tse0_mrx_bytevalid),
-    .tvalid        (req_tvalid),
-    .tready        (req_tready),
-    .tdata         (req_tdata),
-    .tkeep         (req_tkeep),
-    .tlast         (req_tlast),
+    .tvalid        (dq_tvalid),
+    .tready        (dq_tready),
+    .tdata         (dq_tdata),
+    .tkeep         (dq_tkeep),
+    .tlast         (dq_tlast),
     .tuser         (),
     .tlen          (req_len),            // in-band length sideband -> reframe.tuser
     .dbg_hdr_valid (),
@@ -137,17 +162,43 @@ module fabric_bridge (
     .dbg_emit_frames(dbg_df_emit_frames)
   );
 
+  // interlock_tap: inline pass-through that also feeds the canonical packet to
+  // interlock_core and captures the cert. dbg_* read hierarchically in sim; wired
+  // to dbg_apb for silicon. s_dir=0 (request = "in"). Phase A: request path only.
+  interlock_tap tap_req (
+    .clk        (clk),
+    .rst_n      (rst_n),
+    .s_tvalid   (dq_tvalid),
+    .s_tready   (dq_tready),
+    .s_tdata    (dq_tdata),
+    .s_tkeep    (dq_tkeep),
+    .s_tlast    (dq_tlast),
+    .s_dir      (1'b0),
+    .m_tvalid   (rq_tvalid),
+    .m_tready   (rq_tready),
+    .m_tdata    (rq_tdata),
+    .m_tkeep    (rq_tkeep),
+    .m_tlast    (rq_tlast),
+    .bucket_tick(tick_pulse),
+    .cert_valid (), .cert_data (), .cert_last (),
+    .dbg_idle(dbg_il_idle), .dbg_tick_err(dbg_il_tick_err),
+    .dbg_pkt_done(dbg_il_pkt_done), .dbg_pkt_acc(dbg_il_pkt_acc),
+    .dbg_bytes_fed(dbg_il_bytes_fed), .dbg_pr_length(dbg_il_pr_length),
+    .dbg_cert_seq(dbg_il_cert_seq), .dbg_cert_chk(dbg_il_cert_chk),
+    .dbg_cert_b0_3(dbg_il_cert_b0_3), .dbg_cert_b4_7(dbg_il_cert_b4_7)
+  );
+
   eth_reframe #(
     .FORCE_DST (MAC_SERVER),
     .FORCE_SRC (MAC_CLIENT)
   ) reframe_req (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (req_tvalid),
-    .tready        (req_tready),
-    .tdata         (req_tdata),
-    .tkeep         (req_tkeep),
-    .tlast         (req_tlast),
+    .tvalid        (rq_tvalid),
+    .tready        (rq_tready),
+    .tdata         (rq_tdata),
+    .tkeep         (rq_tkeep),
+    .tlast         (rq_tlast),
     .tuser         (req_len),
     .out_rdy       (tse1_mtx_rdy),
     .out_acpt      (tse1_mtx_acpt),
@@ -167,7 +218,7 @@ module fabric_bridge (
   );
 
   // deframe_req's AXI-valid: does the ingress deframer ever produce output?
-  assign dbg_df_tvalid  = req_tvalid;
+  assign dbg_df_tvalid  = dq_tvalid;
   // deframe_req's extracted LENGTH (eth_len_q). Compare to reframe's data_end-14:
   // equal -> deframe capture is the fault; different -> reframe sampled wrong.
   assign dbg_df_eth_len = req_len;

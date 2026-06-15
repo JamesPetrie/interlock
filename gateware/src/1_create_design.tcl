@@ -12,6 +12,16 @@ import_files -hdl_source {./src/src_hdl/crc32_pkg.sv}
 import_files -hdl_source {./src/src_hdl/eth_deframe.sv}
 import_files -hdl_source {./src/src_hdl/eth_reframe.sv}
 import_files -hdl_source {./src/src_hdl/dbg_apb.sv}
+# interlock core stack (Phase A: canon_core in the loop via interlock_tap)
+import_files -hdl_source {./src/secworks/sha256_k_constants.v}
+import_files -hdl_source {./src/secworks/sha256_w_mem.v}
+import_files -hdl_source {./src/secworks/sha256_core.v}
+import_files -hdl_source {./src/core/sha256_stream.v}
+import_files -hdl_source {./src/core/pkt_record.v}
+import_files -hdl_source {./src/core/hmac_sha256.v}
+import_files -hdl_source {./src/core/interlock_core.v}
+import_files -hdl_source {./src/core/axis32_to_bytes.v}
+import_files -hdl_source {./src/core/interlock_tap.v}
 
 
 build_design_hierarchy 

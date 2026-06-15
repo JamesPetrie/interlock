@@ -447,6 +447,33 @@ async def test_instrumentation_type_frame(dut):
 
 
 @cocotb.test()
+async def test_interlock_tap_byte_order(dut):
+    """Drive a frame whose payload is a wire.py packet through the real deframe;
+    the inline interlock_tap must parse the SAME declared length (first 4 bytes,
+    big-endian) the packet was built with — confirming deframe's AXIS byte order
+    matches axis32_to_bytes (the synth-vs-sim byte-order trap the adapter warns
+    about). Also confirms the frame still forwards with the tap inline."""
+    import sys
+    sys.path.insert(0, "/root/fpga/interlock/prototype")
+    import wire as Wp
+    await reset(dut)
+    src = bundle(dut, REQ[0])
+    sink = bundle(dut, REQ[1])
+    pkt = Wp.output_packet(7, b"\xa5" * 24)            # a real wire.py packet
+    assert len(pkt) <= 1500
+    expect_len = int.from_bytes(pkt[0:4], "big")        # its declared-length header
+    frame = eth_frame(REQ[2], REQ[3], pkt)
+    tx = cocotb.start_soon(drive_frame(dut, src, frame))
+    rx = cocotb.start_soon(receive_frames(dut, sink, 1))
+    await Combine(tx, rx)
+    assert rx.result()[0] == sanitized(REQ, pkt), "frame must still forward with the tap inline"
+    got = int(dut.tap_req.dbg_pr_length.value)
+    dut._log.info(f"tap pr_length=0x{got:08x} expect=0x{expect_len:08x}")
+    assert got == expect_len, \
+        f"deframe->adapter byte-order mismatch: tap parsed 0x{got:08x}, expected 0x{expect_len:08x}"
+
+
+@cocotb.test()
 async def test_bidirectional_concurrent(dut):
     """Both directions active at once — verify no cross-talk between the two
     independent sanitizing paths."""

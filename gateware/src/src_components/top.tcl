@@ -369,6 +369,17 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_trunc_co
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_tuser_at_sof" "dbg_apb_0:rf_tuser_at_sof" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_df_emit_frames" "dbg_apb_0:df_emit_frames" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_rf_last_fwd_len" "dbg_apb_0:rf_last_fwd_len" }
+# interlock_tap probes (Phase A: canon_core in the loop)
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_idle"      "dbg_apb_0:il_idle" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_tick_err"  "dbg_apb_0:il_tick_err" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_pkt_done"  "dbg_apb_0:il_pkt_done" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_pkt_acc"   "dbg_apb_0:il_pkt_acc" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_bytes_fed" "dbg_apb_0:il_bytes_fed" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_pr_length" "dbg_apb_0:il_pr_length" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_cert_seq"  "dbg_apb_0:il_cert_seq" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_cert_chk"  "dbg_apb_0:il_cert_chk" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_cert_b0_3" "dbg_apb_0:il_cert_b0_3" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"fabric_bridge_0:dbg_il_cert_b4_7" "dbg_apb_0:il_cert_b4_7" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_IOD_CDR_C0_0:CDR_CLOCKS" "PF_IOD_CDR_C1_0:CDR_CLOCKS" "PF_IOD_CDR_CCC_C0_0:CDR_CLOCKS" }
 
 # ============= Port 0  (Mac side: CORETSE_0 / PF_IOD_CDR_C0 / SSDetect_0) ===

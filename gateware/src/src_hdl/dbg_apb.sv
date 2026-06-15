@@ -49,7 +49,19 @@ module dbg_apb (
   input  wire [15:0] df_trunc_count,  // conforming short frames (zero-filled)
   input  wire [15:0] rf_tuser_at_sof, // length reframe sampled at the 1st SOF
   input  wire [15:0] df_emit_frames,  // frames deframe emitted (passed reject)
-  input  wire [15:0] rf_last_fwd_len  // length of last frame reframe completed
+  input  wire [15:0] rf_last_fwd_len, // length of last frame reframe completed
+
+  // ---- interlock_tap probes (Phase A: canon_core in the loop) ----
+  input  wire        il_idle,
+  input  wire        il_tick_err,
+  input  wire [15:0] il_pkt_done,
+  input  wire [15:0] il_pkt_acc,
+  input  wire [15:0] il_bytes_fed,
+  input  wire [31:0] il_pr_length,
+  input  wire [15:0] il_cert_seq,
+  input  wire [31:0] il_cert_chk,
+  input  wire [31:0] il_cert_b0_3,
+  input  wire [31:0] il_cert_b4_7
 );
 
   assign PREADY  = 1'b1;   // zero wait states
@@ -83,6 +95,14 @@ module dbg_apb (
       4'd6:    PRDATA = {df_sof_count,   df_first_lt};    // 0x18: frames-in | first L/T
       4'd7:    PRDATA = {16'h0, rf_tuser_at_sof};         // 0x1C: reframe length @ 1st SOF
       4'd8:    PRDATA = {df_emit_frames, rf_last_fwd_len};// 0x20: deframe-emitted | last fwd len
+      // ---- interlock_tap (Phase A) ----
+      4'd9:    PRDATA = il_cert_chk;                      // 0x24: cert fold-checksum
+      4'd10:   PRDATA = il_cert_b0_3;                     // 0x28: cert bytes 0-3 ("iloc")
+      4'd11:   PRDATA = il_cert_b4_7;                     // 0x2C: cert bytes 4-7 ("k-v5")
+      4'd12:   PRDATA = il_pr_length;                     // 0x30: declared length parsed by core
+      4'd13:   PRDATA = {il_cert_seq, il_bytes_fed};      // 0x34: certs emitted | bytes fed
+      4'd14:   PRDATA = {il_pkt_acc, il_pkt_done};        // 0x38: pkts accepted | pkts done
+      4'd15:   PRDATA = {30'h0, il_tick_err, il_idle};    // 0x3C: [1]=tick_err [0]=idle
       default: PRDATA = 32'hDEAD_0000;
     endcase
   end
