@@ -10,7 +10,11 @@
 //      offset is removed with a residue register,
 //   3. drops PAD and FCS (everything after LENGTH octets),
 //   4. cross-checks LENGTH against the octets actually received and raises a
-//      flag on TUSER if it does not match the number of data bytes.
+//      flag on TUSER if it does not match the number of data bytes,
+//   5. drops frames whose LENGTH field is out of range (L/T > ETH_LEN_MAX,
+//      i.e. Type frames / over-long lengths): no AXI beats are emitted at all.
+//      LENGTH is known at header completion, before the first data beat, so the
+//      whole frame is suppressed cleanly.
 //
 // Output AXI-Stream
 //
@@ -75,8 +79,10 @@ module eth_deframe (
   len_t                       beat_idx;     // data beat index to be emitted next
 
   // Parsed header view of the shift register (valid once word 3 has shifted in).
-  wire eth_header_t eth_hdr = eth_hdr_from_bytes(hdr_bytes);
-  wire len_t        eth_len = eth_hdr.len_type;
+  wire eth_header_t eth_hdr   = eth_hdr_from_bytes(hdr_bytes);
+  wire len_t        eth_len   = eth_hdr.len_type;
+  wire              len_valid = (eth_len <= len_t'(ETH_LEN_MAX));
+
 
   // AXI-Stream output register (declared before the accept logic uses it)
   logic        tvalid_r;
@@ -91,7 +97,8 @@ module eth_deframe (
   assign tlast  = tlast_r;
   assign tuser  = tuser_r;
 
-  wire len_t  beats_total    = (eth_len + 16'd3) >> 2;                 // ceil(LEN/4)
+  // beats_total forced to 0 for an out-of-range LENGTH so no beat is emitted.
+  wire len_t  beats_total    = len_valid ? ((eth_len + 16'd3) >> 2) : '0; // ceil(LEN/4)
   wire        data_active    = (int'(rx_widx) >= HDR_FULL_WORDS + 1);
   wire        beat_remaining = (beat_idx != beats_total);
   wire        is_last        = (beat_idx == beats_total - 1'b1);
@@ -115,7 +122,6 @@ module eth_deframe (
   // Words outside SOF..EOF are accepted but dropped (sampling starts at SOF).
   wire frame_word = in_frame || in_sof;
 
-  // Accept whenever the word doesn't produce an AXI beat or the beat reg is free.
   wire emitting = data_active && beat_remaining;
   assign in_acpt = !emitting || !tvalid_r || tready;
   wire in_handshake = in_rdy && in_acpt;
