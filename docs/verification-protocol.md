@@ -54,7 +54,7 @@ The cleartext header carries only what a trusted party must act on without decry
 Every second the interlock emits a certificate committing to the last 1000 buckets of both logs, computed incrementally as packets stream through:
 
 ```
-1. per packet:   record       =  (length, request_id, H(packet))
+1. per packet:   record       =  (length ‖ H(packet))
 2. per bucket:   bucket_hash  =  H(record₁ ‖ record₂ ‖ …)            (H(ε) if empty)
 3. per second:   overall      =  H(bucket_hash₁ ‖ … ‖ bucket_hash₁₀₀₀)   one per direction
 
@@ -70,7 +70,7 @@ certificate = version ‖ interlock_id ‖ bucket_start ‖ num_buckets(=1000)
 | `bucket_start`, `num_buckets` | place this second on the bucket timeline; consecutive certificates must tile it — a gap the prover cannot fill is a violation (P2, P4) |
 | `overall_in`, `overall_out` | commit 2000 bucket hashes without shipping them |
 | `nonce` | latest verifier nonce seen; proves the certificate postdates it (P4) |
-| `length`, `request_id` in records | locate a challenged byte; bind response to request without payload exposure (P1, P5) |
+| `length` in records | locate a challenged byte without payload exposure (P1, P5) |
 | `reference_id` in records | navigate the context chain at challenge time (References) |
 | `H(ciphertext)` | the H1 the recomputation certificate binds to (P3, P5) |
 | `recomp_commitment` | the H2 pinning the keys, fixed at request time (P3) |
