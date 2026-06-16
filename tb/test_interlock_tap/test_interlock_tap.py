@@ -131,6 +131,20 @@ async def honest_pair(dut):
 
 
 @cocotb.test()
+async def out_only(dut):
+    """Response-path core (s_dir=1): out-only packets vs a golden fed only out.
+    This is exactly the rsp core's behaviour in the two-core design — its cert
+    carries overall_out; overall_in stays empty."""
+    ref = await boot(dut)
+    key = W.H(b"k")
+    out1 = W.output_packet(1, W.encrypt(key, b"out", W.tokens_to_bytes([5, 6])))
+    out2 = W.output_packet(2, W.encrypt(key, b"out", W.tokens_to_bytes([7])))
+    cert, ref_cert = await run_window(dut, ref, {0: [("out", out1)], 3: [("out", out2)]})
+    assert cert == ref_cert, f"\n dut={cert.hex()}\n ref={ref_cert.hex()}"
+    dut._log.info("out_only: rsp-direction cert matches golden")
+
+
+@cocotb.test()
 async def multi_turn(dut):
     ref = await boot(dut)
     for rid in (1, 2, 3):
