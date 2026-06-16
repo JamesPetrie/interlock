@@ -1,14 +1,13 @@
-# cocotb testbench for fabric_bridge.sv
+# cocotb: cert egress through fabric_bridge (port-0 TX). Fast tick via TICK_DIV.
 TOPLEVEL_LANG    = verilog
 TOPLEVEL         = fabric_bridge
-MODULE           = test_fabric_bridge
+MODULE           = test_cert_egress
 
 REPO_ROOT       := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 VERILOG_SOURCES  = $(REPO_ROOT)/gateware/src/src_hdl/eth_pkg.sv
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/src_hdl/crc32_pkg.sv
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/src_hdl/eth_deframe.sv
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/src_hdl/eth_reframe.sv
-# interlock core stack (tap spliced into fabric_bridge)
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/secworks/sha256_k_constants.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/secworks/sha256_w_mem.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/secworks/sha256_core.v
@@ -23,5 +22,8 @@ VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/cert_framer.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/mac_tx_mux.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/cert_fifo.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/src_hdl/fabric_bridge.sv
+
+# fast bucket tick so 8 ticks (a window) happen quickly in sim
+COMPILE_ARGS += -Pfabric_bridge.TICK_DIV=2048
 
 include $(REPO_ROOT)/tb/common.mk

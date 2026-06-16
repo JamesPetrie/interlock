@@ -100,7 +100,7 @@ module interlock_tap #(
 
     // ---- probes ----
     wire byte_hs = b_valid & b_ready;       // a byte entered the core
-    wire cert_hs = c_valid;                 // cert_ready tied high
+    wire cert_hs = c_valid & cert_ready;    // a cert byte actually transfers
 
     reg [15:0] pkt_done_q, pkt_acc_q, bytes_fed_q, cert_seq_q;
     reg [31:0] prlen_q, prlen_acc;

@@ -135,7 +135,7 @@ module fabric_bridge (
 
   // bucket-tick timer (PROTOTYPE): ~1 ms at 80 MHz. The cocotb cert test drives
   // the tap's bucket_tick directly, so this cadence only matters on silicon.
-  localparam int TICK_DIV = 80000;
+  parameter int TICK_DIV = 80000;
   reg [16:0] tick_cnt;
   reg        tick_pulse;
   always_ff @(posedge clk or negedge rst_n) begin
@@ -318,21 +318,35 @@ module fabric_bridge (
   // Certificate egress -> port 0 (prover frontend): frame each core's cert and
   // mux it onto port-0 MAC-TX between forwarded response frames.
   // ====================================================================
-  wire        crq_valid, crq_ready, crq_last;  wire [7:0] crq_data;   // req core cert
-  wire        crs_valid, crs_ready, crs_last;  wire [7:0] crs_data;   // rsp core cert
+  wire        crq_valid, crq_ready, crq_last;  wire [7:0] crq_data;   // req core -> fifo
+  wire        crs_valid, crs_ready, crs_last;  wire [7:0] crs_data;   // rsp core -> fifo
+  wire        fq_valid, fq_ready, fq_last;     wire [7:0] fq_data;    // fifo -> req framer
+  wire        fs_valid, fs_ready, fs_last;     wire [7:0] fs_data;    // fifo -> rsp framer
   wire        fwd0_rdy, fwd0_acpt, fwd0_sof, fwd0_eof;  wire [31:0] fwd0_dat;  wire [1:0] fwd0_bv;
   wire        cfq_rdy, cfq_acpt, cfq_sof, cfq_eof;      wire [31:0] cfq_dat;   wire [1:0] cfq_bv;
   wire        cfs_rdy, cfs_acpt, cfs_sof, cfs_eof;      wire [31:0] cfs_dat;   wire [1:0] cfs_bv;
 
+  // decouple each cert from the forward path (breaks the cert/forward mux deadlock)
+  cert_fifo fifo_req (
+    .clk(clk), .rst_n(rst_n),
+    .s_valid(crq_valid), .s_ready(crq_ready), .s_data(crq_data), .s_last(crq_last),
+    .m_valid(fq_valid), .m_ready(fq_ready), .m_data(fq_data), .m_last(fq_last)
+  );
+  cert_fifo fifo_rsp (
+    .clk(clk), .rst_n(rst_n),
+    .s_valid(crs_valid), .s_ready(crs_ready), .s_data(crs_data), .s_last(crs_last),
+    .m_valid(fs_valid), .m_ready(fs_ready), .m_data(fs_data), .m_last(fs_last)
+  );
+
   cert_framer cf_req (
     .clk(clk), .rst_n(rst_n),
-    .c_valid(crq_valid), .c_ready(crq_ready), .c_data(crq_data), .c_last(crq_last),
+    .c_valid(fq_valid), .c_ready(fq_ready), .c_data(fq_data), .c_last(fq_last),
     .out_rdy(cfq_rdy), .out_acpt(cfq_acpt), .out_sof(cfq_sof), .out_eof(cfq_eof),
     .out_dat(cfq_dat), .out_bytevalid(cfq_bv)
   );
   cert_framer cf_rsp (
     .clk(clk), .rst_n(rst_n),
-    .c_valid(crs_valid), .c_ready(crs_ready), .c_data(crs_data), .c_last(crs_last),
+    .c_valid(fs_valid), .c_ready(fs_ready), .c_data(fs_data), .c_last(fs_last),
     .out_rdy(cfs_rdy), .out_acpt(cfs_acpt), .out_sof(cfs_sof), .out_eof(cfs_eof),
     .out_dat(cfs_dat), .out_bytevalid(cfs_bv)
   );
