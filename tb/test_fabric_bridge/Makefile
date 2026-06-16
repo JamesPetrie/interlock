@@ -18,6 +18,9 @@ VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/hmac_sha256.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/interlock_core.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/axis32_to_bytes.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/interlock_tap.v
+VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/bytes2axis32.v
+VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/cert_framer.v
+VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/core/mac_tx_mux.v
 VERILOG_SOURCES += $(REPO_ROOT)/gateware/src/src_hdl/fabric_bridge.sv
 
 include $(REPO_ROOT)/tb/common.mk

@@ -32,6 +32,7 @@ async def reset(dut):
     dut.s_tlast.value = 0
     dut.s_dir.value = 0
     dut.m_tready.value = 1          # downstream (reframe) always accepts
+    dut.cert_ready.value = 1        # cert sink always ready
     dut.bucket_tick.value = 0
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 5)

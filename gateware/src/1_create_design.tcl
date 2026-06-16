@@ -22,6 +22,9 @@ import_files -hdl_source {./src/core/hmac_sha256.v}
 import_files -hdl_source {./src/core/interlock_core.v}
 import_files -hdl_source {./src/core/axis32_to_bytes.v}
 import_files -hdl_source {./src/core/interlock_tap.v}
+import_files -hdl_source {./src/core/bytes2axis32.v}
+import_files -hdl_source {./src/core/cert_framer.v}
+import_files -hdl_source {./src/core/mac_tx_mux.v}
 
 
 build_design_hierarchy 

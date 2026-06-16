@@ -36,8 +36,9 @@ module interlock_tap #(
     output wire [3:0]  m_tkeep,
     output wire        m_tlast,
     input  wire        bucket_tick,
-    // certificate stream out (for byte-exact sim capture; cert_ready tied high)
+    // certificate stream out (to a cert_framer; cert_ready backpressures the core)
     output wire        cert_valid,
+    input  wire        cert_ready,
     output wire [7:0]  cert_data,
     output wire        cert_last,
     // ---- PROTOTYPE_DEBUG probes (the [dbg4] accounting chain) ----
@@ -89,7 +90,7 @@ module interlock_tap #(
         .s_valid(b_valid), .s_ready(s_ready_core), .s_data(b_data), .s_last(b_last), .s_dir(s_dir),
         .pkt_done(pkt_done), .pkt_accepted(pkt_accepted),
         .bucket_tick(bucket_tick),
-        .cert_valid(c_valid), .cert_ready(1'b1), .cert_data(c_data), .cert_last(c_last),
+        .cert_valid(c_valid), .cert_ready(cert_ready), .cert_data(c_data), .cert_last(c_last),
         .idle(idle), .tick_err(tick_err)
     );
     assign b_ready    = s_ready_core;

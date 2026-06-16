@@ -91,7 +91,16 @@ module fabric_bridge (
   output wire [15:0] dbg_il_cert_seq,
   output wire [31:0] dbg_il_cert_chk,
   output wire [31:0] dbg_il_cert_b0_3,
-  output wire [31:0] dbg_il_cert_b4_7
+  output wire [31:0] dbg_il_cert_b4_7,
+
+  // ---- interlock_tap probes (response path, 2nd core) — concise set ----
+  output wire        dbg_il2_idle,
+  output wire        dbg_il2_tick_err,
+  output wire [15:0] dbg_il2_pkt_acc,
+  output wire [31:0] dbg_il2_pr_length,
+  output wire [15:0] dbg_il2_cert_seq,
+  output wire [31:0] dbg_il2_cert_b0_3,
+  output wire [31:0] dbg_il2_cert_b4_7
 );
 
   // Each direction is sanitized at the Ethernet layer:
@@ -180,7 +189,7 @@ module fabric_bridge (
     .m_tkeep    (rq_tkeep),
     .m_tlast    (rq_tlast),
     .bucket_tick(tick_pulse),
-    .cert_valid (), .cert_data (), .cert_last (),
+    .cert_valid (crq_valid), .cert_ready(crq_ready), .cert_data (crq_data), .cert_last (crq_last),
     .dbg_idle(dbg_il_idle), .dbg_tick_err(dbg_il_tick_err),
     .dbg_pkt_done(dbg_il_pkt_done), .dbg_pkt_acc(dbg_il_pkt_acc),
     .dbg_bytes_fed(dbg_il_bytes_fed), .dbg_pr_length(dbg_il_pr_length),
@@ -226,9 +235,11 @@ module fabric_bridge (
   // ====================================================================
   // Responses: CORETSE_1 MAC-RX -> deframe/reframe -> CORETSE_0 MAC-TX
   // ====================================================================
-  wire        rsp_tvalid, rsp_tready, rsp_tlast;
-  wire [31:0] rsp_tdata;
-  wire [3:0]  rsp_tkeep;
+  // deframe -> interlock_tap -> reframe (second tap, response path, s_dir=1)
+  wire        drsp_tvalid, drsp_tready, drsp_tlast;   // deframe -> tap
+  wire        rrsp_tvalid, rrsp_tready, rrsp_tlast;   // tap -> reframe
+  wire [31:0] drsp_tdata, rrsp_tdata;
+  wire [3:0]  drsp_tkeep, rrsp_tkeep;
   wire [15:0] rsp_len;
 
   eth_deframe deframe_rsp (
@@ -240,11 +251,11 @@ module fabric_bridge (
     .in_eof        (tse1_mrx_eof),
     .in_dat        (tse1_mrx_dat),
     .in_bytevalid  (tse1_mrx_bytevalid),
-    .tvalid        (rsp_tvalid),
-    .tready        (rsp_tready),
-    .tdata         (rsp_tdata),
-    .tkeep         (rsp_tkeep),
-    .tlast         (rsp_tlast),
+    .tvalid        (drsp_tvalid),
+    .tready        (drsp_tready),
+    .tdata         (drsp_tdata),
+    .tkeep         (drsp_tkeep),
+    .tlast         (drsp_tlast),
     .tuser         (),
     .tlen          (rsp_len),            // in-band length sideband -> reframe.tuser
     .dbg_hdr_valid (),
@@ -258,26 +269,81 @@ module fabric_bridge (
     .dbg_emit_frames()
   );
 
+  interlock_tap tap_rsp (
+    .clk        (clk),
+    .rst_n      (rst_n),
+    .s_tvalid   (drsp_tvalid),
+    .s_tready   (drsp_tready),
+    .s_tdata    (drsp_tdata),
+    .s_tkeep    (drsp_tkeep),
+    .s_tlast    (drsp_tlast),
+    .s_dir      (1'b1),                  // response = "out"
+    .m_tvalid   (rrsp_tvalid),
+    .m_tready   (rrsp_tready),
+    .m_tdata    (rrsp_tdata),
+    .m_tkeep    (rrsp_tkeep),
+    .m_tlast    (rrsp_tlast),
+    .bucket_tick(tick_pulse),            // shared timer
+    .cert_valid (crs_valid), .cert_ready(crs_ready), .cert_data (crs_data), .cert_last (crs_last),
+    .dbg_idle(dbg_il2_idle), .dbg_tick_err(dbg_il2_tick_err),
+    .dbg_pkt_done(), .dbg_pkt_acc(dbg_il2_pkt_acc),
+    .dbg_bytes_fed(), .dbg_pr_length(dbg_il2_pr_length),
+    .dbg_cert_seq(dbg_il2_cert_seq), .dbg_cert_chk(),
+    .dbg_cert_b0_3(dbg_il2_cert_b0_3), .dbg_cert_b4_7(dbg_il2_cert_b4_7)
+  );
+
   eth_reframe #(
     .FORCE_DST (MAC_CLIENT),
     .FORCE_SRC (MAC_SERVER)
   ) reframe_rsp (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (rsp_tvalid),
-    .tready        (rsp_tready),
-    .tdata         (rsp_tdata),
-    .tkeep         (rsp_tkeep),
-    .tlast         (rsp_tlast),
+    .tvalid        (rrsp_tvalid),
+    .tready        (rrsp_tready),
+    .tdata         (rrsp_tdata),
+    .tkeep         (rrsp_tkeep),
+    .tlast         (rrsp_tlast),
     .tuser         (rsp_len),
-    .out_rdy       (tse0_mtx_rdy),
-    .out_acpt      (tse0_mtx_acpt),
-    .out_sof       (tse0_mtx_sof),
-    .out_eof       (tse0_mtx_eof),
-    .out_dat       (tse0_mtx_dat),
-    .out_bytevalid (tse0_mtx_bytevalid),
+    .out_rdy       (fwd0_rdy),
+    .out_acpt      (fwd0_acpt),
+    .out_sof       (fwd0_sof),
+    .out_eof       (fwd0_eof),
+    .out_dat       (fwd0_dat),
+    .out_bytevalid (fwd0_bv),
     .dbg_tuser_at_sof (),
     .dbg_last_fwd_len ()
+  );
+
+  // ====================================================================
+  // Certificate egress -> port 0 (prover frontend): frame each core's cert and
+  // mux it onto port-0 MAC-TX between forwarded response frames.
+  // ====================================================================
+  wire        crq_valid, crq_ready, crq_last;  wire [7:0] crq_data;   // req core cert
+  wire        crs_valid, crs_ready, crs_last;  wire [7:0] crs_data;   // rsp core cert
+  wire        fwd0_rdy, fwd0_acpt, fwd0_sof, fwd0_eof;  wire [31:0] fwd0_dat;  wire [1:0] fwd0_bv;
+  wire        cfq_rdy, cfq_acpt, cfq_sof, cfq_eof;      wire [31:0] cfq_dat;   wire [1:0] cfq_bv;
+  wire        cfs_rdy, cfs_acpt, cfs_sof, cfs_eof;      wire [31:0] cfs_dat;   wire [1:0] cfs_bv;
+
+  cert_framer cf_req (
+    .clk(clk), .rst_n(rst_n),
+    .c_valid(crq_valid), .c_ready(crq_ready), .c_data(crq_data), .c_last(crq_last),
+    .out_rdy(cfq_rdy), .out_acpt(cfq_acpt), .out_sof(cfq_sof), .out_eof(cfq_eof),
+    .out_dat(cfq_dat), .out_bytevalid(cfq_bv)
+  );
+  cert_framer cf_rsp (
+    .clk(clk), .rst_n(rst_n),
+    .c_valid(crs_valid), .c_ready(crs_ready), .c_data(crs_data), .c_last(crs_last),
+    .out_rdy(cfs_rdy), .out_acpt(cfs_acpt), .out_sof(cfs_sof), .out_eof(cfs_eof),
+    .out_dat(cfs_dat), .out_bytevalid(cfs_bv)
+  );
+
+  mac_tx_mux port0_mux (
+    .clk(clk), .rst_n(rst_n),
+    .in0_rdy(fwd0_rdy), .in0_sof(fwd0_sof), .in0_eof(fwd0_eof), .in0_dat(fwd0_dat), .in0_bv(fwd0_bv), .in0_acpt(fwd0_acpt),
+    .in1_rdy(cfq_rdy),  .in1_sof(cfq_sof),  .in1_eof(cfq_eof),  .in1_dat(cfq_dat),  .in1_bv(cfq_bv),  .in1_acpt(cfq_acpt),
+    .in2_rdy(cfs_rdy),  .in2_sof(cfs_sof),  .in2_eof(cfs_eof),  .in2_dat(cfs_dat),  .in2_bv(cfs_bv),  .in2_acpt(cfs_acpt),
+    .out_rdy(tse0_mtx_rdy), .out_sof(tse0_mtx_sof), .out_eof(tse0_mtx_eof),
+    .out_dat(tse0_mtx_dat), .out_bytevalid(tse0_mtx_bytevalid), .out_acpt(tse0_mtx_acpt)
   );
 
 endmodule
