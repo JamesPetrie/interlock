@@ -226,46 +226,44 @@ are each **shared** (multiple flows multiplexed onto one physical resource).
 
 ```mermaid
 flowchart TB
-    PC["Prover compute"]
-    BUS{{"shared bus to network: response / certificate / request"}}
-
-    subgraph RSP["Response pipeline (prover to network)"]
+    subgraph REQ["Request pipeline (network → prover)"]
       direction TB
-      d1["deframe"] --> k1["check length + request ID"] --> pp1["ping-pong buffers"] --> rc["response commit"] --> rf1["reframe"]
+      qi(["from network"]) --> qd["deframe"] --> qk["check len + request ID"] --> qp["ping-pong buffers"] --> qc["request commit"] --> qr["reframe"] --> qo(["to prover compute"])
     end
 
-    subgraph REQ["Request pipeline (network to prover)"]
+    subgraph RSP["Response pipeline (prover → network)"]
       direction TB
-      d2["deframe"] --> k2["check length + request ID"] --> pp2["ping-pong buffers"] --> qc["request commit"] --> rf2["reframe"]
+      ri(["from prover compute"]) --> rd["deframe"] --> rk["check len + request ID"] --> rp["ping-pong buffers"] --> rc["response commit"] --> rr["reframe"] --> ro(["to network"])
     end
 
-    CERT["certificate"]
-
-    PC -->|"ethernet: response up"| d1
-    rf2 -->|"ethernet: request down"| PC
-    rf1 --> BUS
-    CERT --> BUS
-    BUS --> d2
-    rc -->|response root| CERT
-    qc -->|request root| CERT
-    k2 -.->|nonce| CERT
+    CERT["certificate"] --> co(["cert → network"])
+    rc -. response root .-> CERT
+    qc -. request root .-> CERT
+    qk -. nonce .-> CERT
 ```
 
-Reading guide:
+The two pipelines are drawn as **independent parallel lanes**, both flowing
+top→bottom; the certificate sits beside them, fed on dotted edges.
 
-- **Response** (prover → network): `prover compute → [shared ethernet] → deframe →
-  check → ping-pong → response commit → reframe → [shared bus] → network`.
-- **Request** (network → prover): `network → [shared bus] → deframe → check →
-  ping-pong → request commit → reframe → [shared ethernet] → prover compute`.
+- **Request lane** (network → prover): `deframe → check → ping-pong → request
+  commit → reframe`.
+- **Response lane** (prover → network): `deframe → check → ping-pong → response
+  commit → reframe`.
 - **Certificate**: produced from the response commit + request commit + the nonce
-  (taken from the request-pipeline check stage), emitted onto the **shared bus**.
-- The **ping-pong buffers** are identical double-buffers on both sides.
+  (taken from the request-pipeline check stage), emitted to the network.
+- The **ping-pong buffers** are identical double-buffers on both lanes.
+
+**Shared physical links** (kept out of the diagram so the lanes stay parallel):
+the **prover-compute side** is one shared ethernet link carrying both the request
+(down) and the response (up); the **network side** is one shared bus carrying the
+response, the certificate, and the request. The lane endpoints (`from/to network`,
+`from/to prover compute`, `cert → network`) mark where each lane taps those links.
 
 > **To confirm:** (i) whether the nonce is taken from the request-pipeline check
-> stage or a dedicated stage; (ii) whether the bottom bus's three flows (response,
-> certificate, request) are one physical link they share while staying logically
-> separate (assumed here) vs. a single merged output. The empty fan-out boxes in
-> the original sketch are rendered here as the ping-pong double-buffers.
+> stage or a dedicated stage; (ii) whether the network-side bus's three flows
+> (response, certificate, request) share one physical link while staying logically
+> separate (assumed here) vs. a single merged output. The unlabeled fan-out boxes
+> in the original sketch are rendered here as the ping-pong double-buffers.
 
 ---
 
