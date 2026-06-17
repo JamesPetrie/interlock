@@ -105,10 +105,11 @@ module fabric_bridge (
     .tkeep         (req_tkeep),
     .tlast         (req_tlast),
     .tuser         (),
+    .tlen          (req_len),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (req_len)
+    .dbg_eth_len   ()
   );
 
   eth_reframe #(
