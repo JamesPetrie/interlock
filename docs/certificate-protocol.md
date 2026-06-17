@@ -182,17 +182,15 @@ have inserted in that window.
 
 ## 6. I/O timing discipline
 
-To keep packet **timing** from becoming a side channel:
-
-- **Writes are always allowed.**
-- **Read buffering** is sized by `f( max pipeline latency , max packet write time )`
-  — reads are held in a bounded buffer so their timing doesn't leak pipeline state.
+- **Writes are always allowed** — this is to make things easier for the sender, not
+  a side-channel measure.
+- **Read buffering** is sized by `f( max pipeline latency , max packet write time )`:
+  reads are held in a bounded buffer.
 - Reads follow a **Read A → wait → Read B** pattern.
 
-> **TODO / needs detail:** the exact semantics of "read" vs "write" here, and the
-> precise Read A / Read B timing, were not fully specified in the source notes.
-> Documented at the sketch level above; to be pinned down (the intent is to bound
-> the read-timing channel).
+> **TODO / needs detail:** the exact semantics of "read" vs "write" here, the precise
+> Read A / Read B timing, and the purpose of the read buffering were not fully
+> specified in the source notes — to be pinned down.
 
 ---
 
