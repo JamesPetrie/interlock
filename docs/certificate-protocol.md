@@ -84,14 +84,16 @@ prover re-derives it for its log) — it is never trusted from the wire.
 
 ### Overall hash
 
-Each certificate commits, **per direction**, a single **flat hash** over every
-packet's `(length, packet_hash)` pair, concatenated in transmission order across the
-whole window — the pairs are concatenated and hashed directly, as one flat sequence
-per direction:
+Each certificate commits, **per direction**, a single **flat hash** over the
+`(length, packet_hash)` pair of every packet in **this certificate's buckets** (the
+`num_buckets` buckets starting at `bucket_start`), concatenated directly in
+transmission order:
 
 ```
-overall_in  = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )   over all input packets
-overall_out = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )   over all output packets
+overall_in  = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )
+                 -- every input packet in this certificate's buckets, in order
+overall_out = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )
+                 -- every output packet in this certificate's buckets, in order
 ```
 
 - `length` lets the verifier index a randomly-selected byte position (size arithmetic).
