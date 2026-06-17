@@ -85,10 +85,10 @@ module fabric_bridge (
   // ====================================================================
   // Requests: CORETSE_0 MAC-RX -> deframe/reframe -> CORETSE_1 MAC-TX
   // ====================================================================
-  wire        req_tvalid, req_tready, req_tlast;
-  wire [31:0] req_tdata;
-  wire [3:0]  req_tkeep;
-  wire [15:0] req_len;
+  wire        req_tvalid_i, req_tready_i, req_tlast_i;
+  wire [31:0] req_tdata_i;
+  wire [3:0]  req_tkeep_i;
+  wire [15:0] req_len_i;
 
   eth_deframe deframe_req (
     .clk           (clk),
@@ -99,17 +99,42 @@ module fabric_bridge (
     .in_eof        (tse0_mrx_eof),
     .in_dat        (tse0_mrx_dat),
     .in_bytevalid  (tse0_mrx_bytevalid),
-    .tvalid        (req_tvalid),
-    .tready        (req_tready),
-    .tdata         (req_tdata),
-    .tkeep         (req_tkeep),
-    .tlast         (req_tlast),
+    .tvalid        (req_tvalid_i),
+    .tready        (req_tready_i),
+    .tdata         (req_tdata_i),
+    .tkeep         (req_tkeep_i),
+    .tlast         (req_tlast_i),
     .tuser         (),
-    .tlen          (req_len),
+    .tlen          (req_len_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
     .dbg_eth_len   ()
+  );
+
+  wire        req_tvalid_o, req_tready_o, req_tlast_o;
+  wire [31:0] req_tdata_o;
+  wire [3:0]  req_tkeep_o;
+  wire [15:0] req_tuser_o;
+
+  traffic_hash #(
+    .HDR_BYTES (16)
+  ) hash_req (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (req_tvalid_i),
+    .tready_s (req_tready_i),
+    .tdata_s  (req_tdata_i),
+    .tkeep_s  (req_tkeep_i),
+    .tlast_s  (req_tlast_i),
+    .tuser_s  (req_len_i),
+    .tvalid_m (req_tvalid_o),
+    .tready_m (req_tready_o),
+    .tdata_m  (req_tdata_o),
+    .tkeep_m  (req_tkeep_o),
+    .tlast_m  (req_tlast_o),
+    .tuser_m  (req_tuser_o),
+    .overall  ()
   );
 
   eth_reframe #(
@@ -118,12 +143,12 @@ module fabric_bridge (
   ) reframe_req (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (req_tvalid),
-    .tready        (req_tready),
-    .tdata         (req_tdata),
-    .tkeep         (req_tkeep),
-    .tlast         (req_tlast),
-    .tuser         (req_len),
+    .tvalid        (req_tvalid_o),
+    .tready        (req_tready_o),
+    .tdata         (req_tdata_o),
+    .tkeep         (req_tkeep_o),
+    .tlast         (req_tlast_o),
+    .tuser         (req_tuser_o),
     .out_rdy       (tse1_mtx_rdy),
     .out_acpt      (tse1_mtx_acpt),
     .out_sof       (tse1_mtx_sof),
@@ -135,10 +160,10 @@ module fabric_bridge (
   // ====================================================================
   // Responses: CORETSE_1 MAC-RX -> deframe/reframe -> CORETSE_0 MAC-TX
   // ====================================================================
-  wire        rsp_tvalid, rsp_tready, rsp_tlast;
-  wire [31:0] rsp_tdata;
-  wire [3:0]  rsp_tkeep;
-  wire [15:0] rsp_len;
+  wire        rsp_tvalid_i, rsp_tready_i, rsp_tlast_i;
+  wire [31:0] rsp_tdata_i;
+  wire [3:0]  rsp_tkeep_i;
+  wire [15:0] rsp_len_i;
 
   eth_deframe deframe_rsp (
     .clk           (clk),
@@ -149,16 +174,42 @@ module fabric_bridge (
     .in_eof        (tse1_mrx_eof),
     .in_dat        (tse1_mrx_dat),
     .in_bytevalid  (tse1_mrx_bytevalid),
-    .tvalid        (rsp_tvalid),
-    .tready        (rsp_tready),
-    .tdata         (rsp_tdata),
-    .tkeep         (rsp_tkeep),
-    .tlast         (rsp_tlast),
+    .tvalid        (rsp_tvalid_i),
+    .tready        (rsp_tready_i),
+    .tdata         (rsp_tdata_i),
+    .tkeep         (rsp_tkeep_i),
+    .tlast         (rsp_tlast_i),
     .tuser         (),
+    .tlen          (rsp_len_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (rsp_len)
+    .dbg_eth_len   ()
+  );
+
+  wire        rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
+  wire [31:0] rsp_tdata_o;
+  wire [3:0]  rsp_tkeep_o;
+  wire [15:0] rsp_tuser_o;
+
+  traffic_hash #(
+    .HDR_BYTES (16)
+  ) hash_rsp (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (rsp_tvalid_i),
+    .tready_s (rsp_tready_i),
+    .tdata_s  (rsp_tdata_i),
+    .tkeep_s  (rsp_tkeep_i),
+    .tlast_s  (rsp_tlast_i),
+    .tuser_s  (rsp_len_i),
+    .tvalid_m (rsp_tvalid_o),
+    .tready_m (rsp_tready_o),
+    .tdata_m  (rsp_tdata_o),
+    .tkeep_m  (rsp_tkeep_o),
+    .tlast_m  (rsp_tlast_o),
+    .tuser_m  (rsp_tuser_o),
+    .overall  ()
   );
 
   eth_reframe #(
@@ -167,12 +218,12 @@ module fabric_bridge (
   ) reframe_rsp (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (rsp_tvalid),
-    .tready        (rsp_tready),
-    .tdata         (rsp_tdata),
-    .tkeep         (rsp_tkeep),
-    .tlast         (rsp_tlast),
-    .tuser         (rsp_len),
+    .tvalid        (rsp_tvalid_o),
+    .tready        (rsp_tready_o),
+    .tdata         (rsp_tdata_o),
+    .tkeep         (rsp_tkeep_o),
+    .tlast         (rsp_tlast_o),
+    .tuser         (rsp_tuser_o),
     .out_rdy       (tse0_mtx_rdy),
     .out_acpt      (tse0_mtx_acpt),
     .out_sof       (tse0_mtx_sof),

@@ -11,9 +11,16 @@ import_files -hdl_source {./src/src_hdl/eth_pkg.sv}
 import_files -hdl_source {./src/src_hdl/crc32_pkg.sv}
 import_files -hdl_source {./src/src_hdl/eth_deframe.sv}
 import_files -hdl_source {./src/src_hdl/eth_reframe.sv}
+import_files -hdl_source {./src/src_hdl/crypto/sha256_core.sv}
+import_files -hdl_source {./src/src_hdl/crypto/sha256_msg.sv}
+import_files -hdl_source {./src/src_hdl/crypto/sha256_pkg.sv}
+import_files -hdl_source {./src/src_hdl/axis_splitter.sv}
+import_files -hdl_source {./src/src_hdl/payload_hash.sv}
+import_files -hdl_source {./src/src_hdl/record_layer.sv}
+import_files -hdl_source {./src/src_hdl/serializer.sv}
+import_files -hdl_source {./src/src_hdl/traffic_hash.sv}
 
-
-build_design_hierarchy 
+build_design_hierarchy
 
 # Create, configure and generate core components
 source ./src/src_components/COREJTAGDEBUG_C0.tcl
@@ -51,12 +58,12 @@ file copy -force "./src/src_hdl/miv_rv32_opsrv_cfg_pkg.v" "./$Prjname/component/
 
 # Generate SmartDesign Components
 
-build_design_hierarchy 
+build_design_hierarchy
 source ./src/src_components/top.tcl
 
 # Set top level module
-build_design_hierarchy 
-set_root -module {top::work} 
-build_design_hierarchy 
+build_design_hierarchy
+set_root -module {top::work}
+build_design_hierarchy
 save_project
 puts "Design generated successfully\n"
