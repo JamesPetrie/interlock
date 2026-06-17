@@ -134,14 +134,14 @@ pairs** are revealed by the prover at challenge time (§4), not carried in the c
 2. Prover  → Interlock         : feeds the nonce in.
 3. Interlock → Prover → Verifier: an interlock certificate carrying that nonce
                                   (this reveals the recent bucket number).
-4. Verifier → Prover           : randomly selects a bucket y and byte x, up to and
-                                  including the most recent bucket — challenge
-                                  "byte x in bucket y".
+4. Verifier → Prover           : randomly selects a single byte x in the
+                                  certificate's COMBINED buckets (all transmitted
+                                  bytes across its num_buckets buckets, one
+                                  direction) — challenge "byte x".
 5. Prover  → Verifier          : evidence of EITHER
-                                    (a) the packet occupying byte x in bucket y had
-                                        hash z, OR
-                                    (b) byte x in bucket y was empty (from the total
-                                        length of the bucket's packets);
+                                    (a) the packet occupying byte x had hash z, OR
+                                    (b) byte x was empty (past the total length of the
+                                        committed packets);
                                   plus the opening material:
                                     - the ordered (length, packet_hash) pairs (so the
                                       verifier can recompute the overall hash),
@@ -153,15 +153,16 @@ pairs** are revealed by the prover at challenge time (§4), not carried in the c
                                   to a real, single-use request.
 ```
 
-The size-weighted random byte selection samples *transmitted bytes* uniformly; the
-revealed `(length, packet_hash)` pairs let the verifier locate the packet covering
-the challenged byte (by summing lengths) and recompute the overall hash.
+Byte x is a single position over the certificate's **combined buckets** (per
+direction) — not within any one bucket; the size-weighted random selection samples
+*transmitted bytes* uniformly. The revealed `(length, packet_hash)` pairs let the
+verifier recompute the overall hash and locate the packet covering byte x by summing
+lengths across the combined stream.
 
-> **Note (flat hash):** an opening reveals **all** `(length, packet_hash)` pairs for
-> that direction. And since the pairs don't carry the bucket number, how a
-> *bucket-scoped* challenge ("byte x in bucket y") is localized — vs. a global byte
-> position over the window — needs to be pinned down (bucket numbers are committed
-> inside `packet_hash`, not exposed in the pairs). **TODO.**
+> **Note:** the challenge is a single byte position over the combined buckets — there
+> is no per-bucket localization — which matches the flat hash (both operate over the
+> certificate's whole stream). An opening therefore reveals **all** `(length,
+> packet_hash)` pairs for that direction.
 
 ---
 
