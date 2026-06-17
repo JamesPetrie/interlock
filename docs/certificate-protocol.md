@@ -223,7 +223,7 @@ are each **shared** (multiple flows multiplexed onto one physical resource).
 ```mermaid
 flowchart TB
     subgraph REQ["Request pipeline (network → prover)"]
-      direction TB
+      direction BT
       qi(["from network"]) --> qd["deframe"] --> qk["check len + request ID"] --> qp["ping-pong buffers"] --> qc["request commit"] --> qr["reframe"] --> qo(["to prover compute"])
     end
 
@@ -238,8 +238,10 @@ flowchart TB
     qk -. nonce .-> CERT
 ```
 
-The two pipelines are drawn as **independent parallel lanes**, both flowing
-top→bottom; the certificate sits beside them, fed on dotted edges.
+The two pipelines are **independent parallel lanes**, aligned so the **prover-compute
+side is at the top and the network/frontend side at the bottom of both**: the response
+lane flows down (compute → network) and the request lane flows up (network → compute).
+The certificate sits beside them, fed on dotted edges.
 
 - **Request lane** (network → prover): `deframe → check → ping-pong → request
   commit → reframe`.
@@ -249,11 +251,12 @@ top→bottom; the certificate sits beside them, fed on dotted edges.
   (taken from the request-pipeline check stage), emitted to the network.
 - The **ping-pong buffers** are identical double-buffers on both lanes.
 
-**Shared physical links** (kept out of the diagram so the lanes stay parallel):
-the **prover-compute side** is one shared ethernet link carrying both the request
-(down) and the response (up); the **network side** is one shared bus carrying the
-response, the certificate, and the request. The lane endpoints (`from/to network`,
-`from/to prover compute`, `cert → network`) mark where each lane taps those links.
+**Shared physical links** (kept out of the diagram so the lanes stay parallel): the
+**prover-compute side** (top) is one shared ethernet link carrying the request (to
+compute) and the response (from compute); the **network side** (bottom) is one shared
+bus carrying the response, the certificate, and the request. The lane endpoints
+(`from/to network`, `from/to prover compute`, `cert → network`) mark where each lane
+taps those links.
 
 > **To confirm:** (i) whether the nonce is taken from the request-pipeline check
 > stage or a dedicated stage; (ii) whether the network-side bus's three flows
