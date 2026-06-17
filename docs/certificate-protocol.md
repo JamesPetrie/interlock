@@ -1,6 +1,6 @@
 # Interlock certificate & packet protocol
 
-Protocol update consolidating the **packet / record / certificate formats**, the
+Protocol update consolidating the **packet, hashing, and certificate formats**, the
 **challenge protocol**, the **time-bracketing argument**, and the **prover ↔
 interlock dataflow**. Parsed from design notes (2026-06).
 
@@ -80,45 +80,32 @@ prover re-derives it for its log) — it is never trusted from the wire.
 
 ---
 
-## 3. Records, buckets, certificate
+## 3. Overall hash & certificate
 
-### Record
+### Overall hash
 
-```
-record = ( length , packet_hash )
-```
-
-The record commits **only** the length and the packet hash — deliberately **not**
-the request ID or any other header field. This lets the verifier:
-
-- index into a **randomly-selected byte position** within a bucket using only the
-  per-packet `length` values (size arithmetic), and
-- open the **one** challenged packet,
-
-**without revealing every other packet's metadata** (request IDs, references, etc.).
-
-> Change from the earlier design: the record was `(length, request_id,
-> packet_hash)`; `request_id` is dropped from the record (it remains inside the
-> packet header and is therefore still committed via `packet_hash`).
-
-### Bucket hash
+Each certificate commits, **per direction**, a single **flat hash** over every
+packet's `(length, packet_hash)` pair, concatenated in transmission order across the
+whole window. There is **no** per-packet "record" object and **no** intermediate
+per-bucket hash — the pairs are hashed as one sequence:
 
 ```
-bucket_hash = H( record_1 ‖ record_2 ‖ … ‖ record_k )      (ordered, per direction)
-            = H( (length, packet_hash)(length, packet_hash) … )
+overall_in  = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )   over all input packets
+overall_out = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )   over all output packets
 ```
 
-One bucket hash per direction (input / output) per bucket.
+- `length` lets the verifier index a randomly-selected byte position (size arithmetic).
+- `packet_hash = H(HEADER ‖ H(CIPHER))` is the per-packet commitment (§2), hiding the
+  contents until opened.
 
-### Overall hashes
+Only `length` and `packet_hash` enter the hash — **not** the request ID or other
+header fields — so an opening exposes packet *sizes* and *hashes* but not request IDs
+or contents. (The bucket number and the rest of the header stay committed indirectly,
+inside `packet_hash` via the header.)
 
-```
-overall_in  = H( in_bucket_hash_1  ‖ in_bucket_hash_2  ‖ … ‖ in_bucket_hash_1000 )
-overall_out = H( out_bucket_hash_1 ‖ out_bucket_hash_2 ‖ … ‖ out_bucket_hash_1000 )
-```
-
-A hash over the **sequence of per-bucket hashes**, one chain per direction. With
-`num_buckets = 1000`, each certificate covers 1000 buckets × N packets per bucket.
+Buckets remain the **timing / windowing** concept — each packet carries its bucket
+number (§2) and a certificate spans `num_buckets = 1000` of them — but the bucket
+boundaries are **no longer a layer in the hash**.
 
 ### Interlock certificate
 
@@ -129,12 +116,12 @@ A hash over the **sequence of per-bucket hashes**, one chain per direction. With
 | freshness nonce |
 | bucket start |
 | num_buckets ( = 1000 ) |
-| overall_in  (hash of the input bucket-hash sequence) |
-| overall_out (hash of the output bucket-hash sequence) |
+| overall_in  (flat hash of the input `(length, packet_hash)` pairs) |
+| overall_out (flat hash of the output `(length, packet_hash)` pairs) |
 | HMAC of the certificate contents |
 
-The certificate commits the two overall hashes; the **sequence of bucket hashes**
-itself is revealed by the prover at challenge time (§4), not carried in the cert.
+The certificate commits the two overall hashes; the **ordered `(length, packet_hash)`
+pairs** are revealed by the prover at challenge time (§4), not carried in the cert.
 
 ---
 
@@ -154,20 +141,26 @@ itself is revealed by the prover at challenge time (§4), not carried in the cer
                                     (b) byte x in bucket y was empty (from the total
                                         length of the bucket's packets);
                                   plus the opening material:
-                                    - the sequence of bucket hashes,
-                                    - the values used to compute the queried bucket
-                                      hash,
+                                    - the ordered (length, packet_hash) pairs (so the
+                                      verifier can recompute the overall hash),
                                     - the values used to compute the queried packet
-                                      hash.
+                                      hash (header and H(cipher)).
 6. Input binding               : the prover also supplies the certificate of the
                                   INPUT paired with the challenged output (the input
                                   carrying the same request ID), binding the output
                                   to a real, single-use request.
 ```
 
-The size-weighted random `(bucket, byte)` selection samples *transmitted bytes*
-uniformly; the `(length, packet_hash)` records make the position arithmetic
-possible without exposing unchallenged packets.
+The size-weighted random byte selection samples *transmitted bytes* uniformly; the
+revealed `(length, packet_hash)` pairs let the verifier locate the packet covering
+the challenged byte (by summing lengths) and recompute the overall hash.
+
+> **Consequence of the flat hash:** an opening now reveals **all** `(length,
+> packet_hash)` pairs for that direction (previously only the queried bucket's pairs
+> plus the bucket-hash sequence). And since the pairs don't carry the bucket number,
+> how a *bucket-scoped* challenge ("byte x in bucket y") is localized — vs. a global
+> byte position over the window — needs to be pinned down (bucket numbers are
+> committed inside `packet_hash`, not exposed in the pairs). **TODO.**
 
 ---
 
@@ -272,9 +265,10 @@ response, the certificate, and the request. The lane endpoints (`from/to network
 
 ## 9. Changes vs. the prior protocol
 
-- **Record** is now `(length, packet_hash)` (was `(length, request_id,
-  packet_hash)`) — enables random-position challenge openings without revealing
-  unchallenged packets' metadata.
+- **Flat hashing:** the certificate commits a single hash of all `(length,
+  packet_hash)` pairs per direction — no per-packet `record` object and no per-bucket
+  hash layer (the prior design hashed a sequence of per-bucket hashes, each a hash of
+  records). The pair dropped `request_id` (still committed inside `packet_hash`).
 - **Packet header** gains `bucket number` (prover-declared bucket) and, on request
   packets only, `reference request ID` (lets a request reuse data from a previous
   request). Request and response are paired by `request ID`.
