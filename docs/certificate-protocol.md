@@ -1,8 +1,8 @@
 # Interlock certificate & packet protocol
 
-Protocol update consolidating the **packet, hashing, and certificate formats**, the
-**challenge protocol**, the **time-bracketing argument**, and the **prover ↔
-interlock dataflow**. Parsed from design notes (2026-06).
+Snapshot (2026-06) of the interlock's **packet, hashing, and certificate formats**,
+the **challenge protocol**, the **time-bracketing argument**, and the **prover ↔
+interlock dataflow**.
 
 **Scope of the initial implementation:** single **input → output packet pairs**
 (one request, one response) — *not* multi-step exchanges or payloads spanning
@@ -86,8 +86,8 @@ prover re-derives it for its log) — it is never trusted from the wire.
 
 Each certificate commits, **per direction**, a single **flat hash** over every
 packet's `(length, packet_hash)` pair, concatenated in transmission order across the
-whole window. There is **no** per-packet "record" object and **no** intermediate
-per-bucket hash — the pairs are hashed as one sequence:
+whole window — the pairs are concatenated and hashed directly, as one flat sequence
+per direction:
 
 ```
 overall_in  = H( (length, packet_hash) ‖ (length, packet_hash) ‖ … )   over all input packets
@@ -103,9 +103,9 @@ header fields — so an opening exposes packet *sizes* and *hashes* but not requ
 or contents. (The bucket number and the rest of the header stay committed indirectly,
 inside `packet_hash` via the header.)
 
-Buckets remain the **timing / windowing** concept — each packet carries its bucket
-number (§2) and a certificate spans `num_buckets = 1000` of them — but the bucket
-boundaries are **no longer a layer in the hash**.
+Buckets are the **timing / windowing** concept — each packet carries its bucket
+number (§2) and a certificate spans `num_buckets = 1000` of them — they are not a
+layer in the hash.
 
 ### Interlock certificate
 
@@ -155,12 +155,11 @@ The size-weighted random byte selection samples *transmitted bytes* uniformly; t
 revealed `(length, packet_hash)` pairs let the verifier locate the packet covering
 the challenged byte (by summing lengths) and recompute the overall hash.
 
-> **Consequence of the flat hash:** an opening now reveals **all** `(length,
-> packet_hash)` pairs for that direction (previously only the queried bucket's pairs
-> plus the bucket-hash sequence). And since the pairs don't carry the bucket number,
-> how a *bucket-scoped* challenge ("byte x in bucket y") is localized — vs. a global
-> byte position over the window — needs to be pinned down (bucket numbers are
-> committed inside `packet_hash`, not exposed in the pairs). **TODO.**
+> **Note (flat hash):** an opening reveals **all** `(length, packet_hash)` pairs for
+> that direction. And since the pairs don't carry the bucket number, how a
+> *bucket-scoped* challenge ("byte x in bucket y") is localized — vs. a global byte
+> position over the window — needs to be pinned down (bucket numbers are committed
+> inside `packet_hash`, not exposed in the pairs). **TODO.**
 
 ---
 
@@ -172,7 +171,7 @@ bracketing the wall-clock window in which the committed state existed. Combined 
 **reset-** and **speedup-resistance**, this bounds how much work the prover could
 have inserted in that window.
 
-> **Open question (flagged in the source notes):** is nonce → certificate
+> **Open question:** is nonce → certificate
 > round-trip bracketing **sufficient** given the reset / speedup-resistance
 > assumptions? — to analyze.
 
@@ -259,18 +258,5 @@ response, the certificate, and the request. The lane endpoints (`from/to network
 > stage or a dedicated stage; (ii) whether the network-side bus's three flows
 > (response, certificate, request) share one physical link while staying logically
 > separate (assumed here) vs. a single merged output. The unlabeled fan-out boxes
-> in the original sketch are rendered here as the ping-pong double-buffers.
+> are the ping-pong double-buffers.
 
----
-
-## 9. Changes vs. the prior protocol
-
-- **Flat hashing:** the certificate commits a single hash of all `(length,
-  packet_hash)` pairs per direction — no per-packet `record` object and no per-bucket
-  hash layer (the prior design hashed a sequence of per-bucket hashes, each a hash of
-  records). The pair dropped `request_id` (still committed inside `packet_hash`).
-- **Packet header** gains `bucket number` (prover-declared bucket) and, on request
-  packets only, `reference request ID` (lets a request reuse data from a previous
-  request). Request and response are paired by `request ID`.
-- Consolidated the certificate fields, the challenge/opening protocol, the
-  time-bracketing argument, and the dataflow into this one document.
