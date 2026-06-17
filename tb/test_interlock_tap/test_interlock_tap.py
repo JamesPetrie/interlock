@@ -15,7 +15,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 
-sys.path.insert(0, "/root/fpga/interlock/prototype")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "prototype"))
 import wire as W
 from interlock import Interlock
 
@@ -95,11 +95,16 @@ def cert_collector(dut, box):
 
 
 async def run_window(dut, ref, schedule):
+    """schedule[i] = list of (direction, build_fn); build_fn(bucket) -> wire packet.
+    Each packet declares the interlock's current absolute bucket (ref.bucket),
+    which the gateware bucket counter also equals at slot i (both monotonic,
+    advanced once per tick) — so design-A's exact-match accept passes."""
     box = {}
     cert_collector(dut, box)
     for i in range(N):
         await wait_idle(dut)
-        for direction, pkt in schedule.get(i, []):
+        for direction, build_fn in schedule.get(i, []):
+            pkt = build_fn(ref.bucket)
             await send_packet(dut, direction, pkt)
             ref.on_packet(direction, pkt)
         await tick(dut)
@@ -110,8 +115,9 @@ async def run_window(dut, ref, schedule):
 
 
 def pair(rid, prompt, key, resp):
-    return (W.input_packet(rid, key, W.encrypt(key, b"in", W.tokens_to_bytes(prompt))),
-            W.output_packet(rid, W.encrypt(key, b"out", W.tokens_to_bytes(resp))))
+    """Return (in_builder, out_builder); each takes the declared bucket."""
+    return (lambda b: W.input_packet(rid, b, key, W.encrypt(key, b"in", W.tokens_to_bytes(prompt))),
+            lambda b: W.output_packet(rid, b, W.encrypt(key, b"out", W.tokens_to_bytes(resp))))
 
 
 async def boot(dut):
@@ -138,8 +144,8 @@ async def out_only(dut):
     carries overall_out; overall_in stays empty."""
     ref = await boot(dut)
     key = W.H(b"k")
-    out1 = W.output_packet(1, W.encrypt(key, b"out", W.tokens_to_bytes([5, 6])))
-    out2 = W.output_packet(2, W.encrypt(key, b"out", W.tokens_to_bytes([7])))
+    out1 = lambda b: W.output_packet(1, b, W.encrypt(key, b"out", W.tokens_to_bytes([5, 6])))
+    out2 = lambda b: W.output_packet(2, b, W.encrypt(key, b"out", W.tokens_to_bytes([7])))
     cert, ref_cert = await run_window(dut, ref, {0: [("out", out1)], 3: [("out", out2)]})
     assert cert == ref_cert, f"\n dut={cert.hex()}\n ref={ref_cert.hex()}"
     dut._log.info("out_only: rsp-direction cert matches golden")
@@ -153,3 +159,19 @@ async def multi_turn(dut):
         cert, ref_cert = await run_window(dut, ref, {0: [("in", in_pkt)], 1: [("out", out_pkt)]})
         assert cert == ref_cert, f"window {rid} mismatch:\n dut={cert.hex()}\n ref={ref_cert.hex()}"
     dut._log.info("multi_turn: 3 windows, tap certs match golden")
+
+
+@cocotb.test()
+async def wrong_bucket_dropped(dut):
+    """Design A: a packet whose declared bucket != the interlock's current bucket
+    must be DROPPED. Slot 0 sends a mis-declared packet (bucket+5); slot 1 sends a
+    correctly-declared one. The golden drops the mis-declared packet, so its
+    bucket-0 digest is H(empty). If the gateware (wrongly) folded it, the cert
+    would differ — so cert equality proves the gateware dropped it too."""
+    ref = await boot(dut)
+    key = W.H(b"k")
+    bad  = lambda b: W.input_packet(9, b + 5, key, W.encrypt(key, b"in", W.tokens_to_bytes([1, 2])))
+    good = lambda b: W.output_packet(9, b, W.encrypt(key, b"out", W.tokens_to_bytes([3])))
+    cert, ref_cert = await run_window(dut, ref, {0: [("in", bad)], 1: [("out", good)]})
+    assert cert == ref_cert, f"\n dut={cert.hex()}\n ref={ref_cert.hex()}"
+    dut._log.info("wrong_bucket_dropped: mis-declared packet dropped, cert matches golden")

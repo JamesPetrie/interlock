@@ -78,12 +78,12 @@ module interlock_core #(
     wire        pr_rec_valid, pr_dir, pr_in_ready;
     wire [351:0] pr_record;
     wire [31:0] pr_length, pr_cipher_len;
-    wire [63:0] pr_request_id;
+    wire [63:0] pr_request_id, pr_bucket_id;
     pkt_record pr(.clk(clk), .reset_n(rst_n), .dir(s_dir),
         .in_valid(state==IDLE ? s_valid : 1'b0), .in_data(s_data), .in_last(s_last),
         .in_ready(pr_in_ready), .rec_valid(pr_rec_valid), .record(pr_record),
         .pkt_dir(pr_dir), .length(pr_length), .request_id(pr_request_id),
-        .cipher_len(pr_cipher_len));
+        .bucket_id(pr_bucket_id), .cipher_len(pr_cipher_len));
 
     assign s_ready = (state==IDLE) ? pr_in_ready : 1'b0;
 
@@ -116,7 +116,7 @@ module interlock_core #(
     wire [255:0] bkt_dig_sel = bd ? bout_dig : bin_dig;
 
     // --- validity decision (combinational, valid at pr_rec_valid) ---
-    wire [31:0] hdrlen_w = pr_dir ? 32'd12 : 32'd44;
+    wire [31:0] hdrlen_w = pr_dir ? 32'd20 : 32'd52;   // header now carries 8B bucket
     wire [31:0] pktlen_w = hdrlen_w + pr_cipher_len;
     wire [63:0] last_w   = pr_dir ? last_out_id : last_in_id;
     wire        have_w   = pr_dir ? have_out    : have_in;
@@ -124,7 +124,8 @@ module interlock_core #(
     wire bad_len = (pr_length != pr_cipher_len) || (pr_length > SMAX);
     wire bad_id  = have_w && (pr_request_id <= last_w);
     wire bad_cap = ({1'b0, used_w} + {1'b0, pktlen_w}) > CAP;   // 33-bit: no wrap
-    wire accept_w = !bad_len && !bad_id && !bad_cap;
+    wire bad_bucket = (pr_bucket_id != bucket);                 // design A: exact match
+    wire accept_w = !bad_len && !bad_id && !bad_cap && !bad_bucket;
 
     // a queued tick is consumed only when IDLE and not starting a packet fold
     wire consume_tick = (state==IDLE) && !pr_rec_valid && (tick_cnt != 4'd0);
