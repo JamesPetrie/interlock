@@ -32,13 +32,31 @@ a bucket issue: **host-sent wire packets are not being folded into certs at all*
 
 This is a **pre-existing harness limitation, independent of the bucket header**: the
 cert build's egress test (`canon_certtest.sh`) only ever verified that cert frames
-*appear*, never that host traffic *folds* into them. The interlock core samples the
-tapped forward stream only when idle, so host-driven folding was never validated on
-silicon. Reproducing it needs a separate tap/timing investigation (or driving the
-cores from the real prover path), out of scope for the bucket header.
+*appear*, never that host traffic *folds* into them.
 
-**Net:** the bucket *logic* is proven (sim); the *beacon* is proven on silicon; the
-on-silicon closed-loop accept/drop awaits host→core folding being made to work.
+### Full-chain fold now validated in sim (`tb/test_fold_frames`)
+
+To close the gap, a cocotb test now drives an **ethernet frame carrying a wire
+packet through the exact host path** (`tse0_mrx` → `eth_deframe` → `interlock_tap`
+→ `interlock_core` → cert) and checks the cert content:
+- `fold_input_at_bucket0`: a correctly-bucketed frame **folds** — the bucket-0
+  cert's `overall_in` is non-empty and **byte-matches the Python golden**.
+- `drop_wrong_bucket_frame`: a wrong-bucket frame is **dropped** — `overall_in`
+  stays all-empty.
+
+So the frame-path fold **and** the exact-match drop are proven byte-exact in sim,
+through the same chain the host drives. **This isolates the on-silicon non-fold to
+timing, not logic.** The exact-match bucket check is unforgiving, and the simple
+host predictor in `bucket_silicon_test.py` could not hit the live 1 ms bucket
+within the network/pipeline jitter (the packets very likely reached the core but
+were bucket-dropped). Aligning the host to the interlock's bucket needs a precise
+**prover clock (the beacon-driven PLL** — the beacon itself is already validated on
+silicon). That closed loop is the remaining follow-up.
+
+**Net:** the bucket *logic* — including the full frame→deframe→tap→core→cert fold
+and the wrong-bucket drop — is proven byte-exact in sim; the *beacon* is proven on
+silicon; the on-silicon closed-loop accept/drop awaits the prover PLL for bucket
+alignment.
 
 ## Gotcha for future tests
 
