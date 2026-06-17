@@ -121,3 +121,35 @@ async def cert_frames_egress_port0(dut):
         assert f[14:22] == b"ilock-v5", f"cert payload not ilock-v5: {f[14:22]!r}"
     assert len(cert_frames) > 0, f"NO cert frames egressed port0 (saw {len(frames)} frames total)"
     dut._log.info("cert_frames_egress_port0: %d cert frames out port0, payload ilock-v5" % len(cert_frames))
+
+
+@cocotb.test()
+async def beacon_frames_egress_port0(dut):
+    """Tick beacon (design A clock broadcast) egresses port0 with DST 02:..:CB and
+    payload 'ilbcn-v1'. No forwarded load here so the lowest-priority beacon isn't
+    starved; run past STRIDE ticks (TICK_DIV=2048, STRIDE=16 -> ~tick 16)."""
+    await reset(dut)
+    BEACON_DST = bytes.fromhex("0200000000cb")
+    frames = []
+    cur = bytearray()
+    for _ in range(50000):
+        dut.tse0_mtx_acpt.value = 1
+        await ReadOnly()
+        rdy = int(dut.tse0_mtx_rdy.value)
+        eof = int(dut.tse0_mtx_eof.value)
+        dat = int(dut.tse0_mtx_dat.value)
+        bv = int(dut.tse0_mtx_bytevalid.value)
+        await RisingEdge(dut.clk)
+        if rdy:
+            for k in range(4 - bv):
+                cur.append((dat >> (8 * k)) & 0xFF)
+            if eof:
+                frames.append(bytes(cur))
+                cur = bytearray()
+    beacon_frames = [f for f in frames if f[0:6] == BEACON_DST]
+    dut._log.info("port0 frames=%d  beacon frames=%d" % (len(frames), len(beacon_frames)))
+    assert len(beacon_frames) > 0, f"NO beacon frames egressed port0 (saw {len(frames)} total)"
+    bf = beacon_frames[0]
+    dut._log.info("first beacon %dB: %s" % (len(bf), bf[:24].hex()))
+    assert bf[14:22] == b"ilbcn-v1", f"beacon payload not ilbcn-v1: {bf[14:22]!r}"
+    dut._log.info("beacon_frames_egress_port0: %d beacon frames out, payload ilbcn-v1" % len(beacon_frames))

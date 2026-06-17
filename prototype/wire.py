@@ -21,6 +21,7 @@ __all__ = [
     "tokens_to_bytes", "bytes_to_tokens", "input_packet", "output_packet",
     "parse_packet", "packet_hash", "record", "bucket_hash", "overall_hash",
     "cert_body", "cert_body_from_roots", "parse_certificate", "locate",
+    "BEACON", "BEACON_MAGIC", "beacon_body", "parse_beacon",
 ]
 
 UNIT = 4                 # bytes per token on the wire
@@ -155,6 +156,27 @@ def cert_body(interlock_id, bucket_start, hashes_in, hashes_out, nonce):
 def parse_certificate(cert):
     m, tag = cert[:-TAG], cert[-TAG:]
     return {**unpack(CERT, m), "m": m, "tag": tag}
+
+
+# Tick-beacon body (the MAC frame's DATA, DST 02:..:CB). One-way clock broadcast
+# (design A): the prover slaves its clock to this so it can declare buckets that
+# match the interlock's. It carries only time (not secret), so it stays out of the
+# unexplained-info budget. `bucket` is the absolute index starting at the beacon edge.
+BEACON_MAGIC = b"ilbcn-v1"
+BEACON = [("magic", 8, "bytes"), ("interlock_id", 8, "int"), ("bucket", 8, "int"),
+          ("tick_period_ns", 4, "int"), ("stride", 4, "int")]
+
+
+def beacon_body(interlock_id, bucket, tick_period_ns, stride):
+    return pack(BEACON, {"magic": BEACON_MAGIC, "interlock_id": interlock_id,
+                         "bucket": bucket, "tick_period_ns": tick_period_ns, "stride": stride})
+
+
+def parse_beacon(body):
+    """Parse a 32-byte tick-beacon body; raises if the magic is wrong."""
+    b = unpack(BEACON, body)
+    assert b["magic"] == BEACON_MAGIC, "not a beacon"
+    return b
 
 
 def locate(direction, records, x):

@@ -8,7 +8,7 @@ from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge, Combine
 
 async def reset(dut):
     cocotb.start_soon(Clock(dut.clk, 8, unit="ns").start())
-    for p in ("in0", "in1", "in2"):
+    for p in ("in0", "in1", "in2", "in3"):
         getattr(dut, p + "_rdy").value = 0
         getattr(dut, p + "_sof").value = 0
         getattr(dut, p + "_eof").value = 0
@@ -93,3 +93,18 @@ async def three_way(dut):
     assert [0x10, 0x11] in frames and [0x20] in frames and [0x30, 0x31, 0x32] in frames, \
         f"frames={frames}"
     dut._log.info("three_way: all three frames forwarded whole")
+
+
+@cocotb.test()
+async def beacon_lowest_priority(dut):
+    """Beacon (in3) is the lowest priority: forwarded traffic (in0) wins over it,
+    but both frames still pass whole."""
+    await reset(dut)
+    rx = cocotb.start_soon(sink(dut, 2))
+    t0 = cocotb.start_soon(drive(dut, "in0", [0xF0, 0xF1]))   # forwarded
+    t3 = cocotb.start_soon(drive(dut, "in3", [0xE0]))         # beacon
+    await Combine(t0, t3, rx)
+    frames = rx.result()
+    assert [0xF0, 0xF1] in frames and [0xE0] in frames, f"frames={frames}"
+    assert frames[0] == [0xF0, 0xF1], f"forwarded should beat beacon, got {frames[0]}"
+    dut._log.info("beacon_lowest_priority: forwarded won arbitration over the beacon")

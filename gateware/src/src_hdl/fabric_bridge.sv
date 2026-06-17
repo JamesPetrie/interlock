@@ -351,11 +351,30 @@ module fabric_bridge (
     .out_dat(cfs_dat), .out_bytevalid(cfs_bv)
   );
 
+  // tick beacon — one-way clock broadcast (design A): every STRIDE ticks emit a
+  // 32-byte beacon (DST 02:..:CB) so the prover can declare matching buckets. It
+  // is the lowest-priority mux input (droppable; never delays forwarding/certs).
+  wire        bcn_bvalid, bcn_bready, bcn_blast;
+  wire [7:0]  bcn_bdata;
+  wire        bcn_rdy, bcn_acpt, bcn_sof, bcn_eof;  wire [31:0] bcn_dat;  wire [1:0] bcn_bv;
+  tick_beacon #(.IID(64'd7), .TICK_PERIOD_NS(32'd1000000), .STRIDE(32'd16)) beacon (
+    .clk(clk), .rst_n(rst_n), .bucket_tick(tick_pulse),
+    .b_valid(bcn_bvalid), .b_ready(bcn_bready), .b_data(bcn_bdata), .b_last(bcn_blast),
+    .b_dropped()
+  );
+  cert_framer #(.CERT_DST(48'h02_00_00_00_00_cb), .CERT_LEN(16'd32)) cf_bcn (
+    .clk(clk), .rst_n(rst_n),
+    .c_valid(bcn_bvalid), .c_ready(bcn_bready), .c_data(bcn_bdata), .c_last(bcn_blast),
+    .out_rdy(bcn_rdy), .out_acpt(bcn_acpt), .out_sof(bcn_sof), .out_eof(bcn_eof),
+    .out_dat(bcn_dat), .out_bytevalid(bcn_bv)
+  );
+
   mac_tx_mux port0_mux (
     .clk(clk), .rst_n(rst_n),
     .in0_rdy(fwd0_rdy), .in0_sof(fwd0_sof), .in0_eof(fwd0_eof), .in0_dat(fwd0_dat), .in0_bv(fwd0_bv), .in0_acpt(fwd0_acpt),
     .in1_rdy(cfq_rdy),  .in1_sof(cfq_sof),  .in1_eof(cfq_eof),  .in1_dat(cfq_dat),  .in1_bv(cfq_bv),  .in1_acpt(cfq_acpt),
     .in2_rdy(cfs_rdy),  .in2_sof(cfs_sof),  .in2_eof(cfs_eof),  .in2_dat(cfs_dat),  .in2_bv(cfs_bv),  .in2_acpt(cfs_acpt),
+    .in3_rdy(bcn_rdy),  .in3_sof(bcn_sof),  .in3_eof(bcn_eof),  .in3_dat(bcn_dat),  .in3_bv(bcn_bv),  .in3_acpt(bcn_acpt),
     .out_rdy(tse0_mtx_rdy), .out_sof(tse0_mtx_sof), .out_eof(tse0_mtx_eof),
     .out_dat(tse0_mtx_dat), .out_bytevalid(tse0_mtx_bytevalid), .out_acpt(tse0_mtx_acpt)
   );
