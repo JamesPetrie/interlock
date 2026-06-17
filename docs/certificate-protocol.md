@@ -40,8 +40,8 @@ Every packet is `header ‖ encrypted payload`. All header integers are big-endi
 |---|---|
 | length | payload length |
 | request ID | unique, monotonically increasing id |
-| bucket number | prover-declared bucket (design A — the interlock drops on mismatch) |
-| reference request ID | links this packet to a prior request/response (see below) |
+| bucket number | prover-declared bucket |
+| reference request ID | references a previous request whose data this request uses (see below) |
 | recomputation commitment | hash of the cryptographic info needed to recompute the output (e.g. `H(key)`) |
 | encrypted payload | the ciphertext |
 
@@ -50,19 +50,22 @@ Every packet is `header ‖ encrypted payload`. All header integers are big-endi
 | field | purpose |
 |---|---|
 | length | payload length |
-| request ID | unique, monotonically increasing id |
+| request ID | the request ID of the input it is paired with |
 | bucket number | prover-declared bucket |
-| reference request ID | the request ID this response answers (binds response → request) |
 | encrypted payload | the ciphertext |
 
-The output packet carries **no** recomputation commitment — recomputation is keyed
-off the input.
+The output packet carries **no** recomputation commitment (recomputation is keyed
+off the input) and **no** reference request ID.
 
-> **Reference request ID** forms a **linked-list** structure so requests and
-> responses can span **multiple turns**: a response points at the request it
-> answers; a follow-up request points at the prior turn. The initial
-> implementation only exercises single input→output pairs, but committing this
-> field now lets multi-step chains be verified later without changing the format.
+> **Request ↔ response pairing is by request ID:** a response carries the same
+> request ID as the input it answers, so no separate reference field is needed on
+> the output.
+>
+> **Reference request ID** (request packets only) lets a request **use data from a
+> previous request** — e.g. a multi-turn exchange where a later request depends on
+> an earlier one. The initial implementation only exercises single input→output
+> pairs; committing this field now lets such cross-request dependencies be expressed
+> later without a format change.
 
 ### Packet hash
 
@@ -157,9 +160,9 @@ itself is revealed by the prover at challenge time (§4), not carried in the cer
                                     - the values used to compute the queried packet
                                       hash.
 6. Input binding               : the prover also supplies the certificate of the
-                                  INPUT associated with the output's request ID
-                                  (via the reference request ID), binding the
-                                  challenged output to a real, single-use request.
+                                  INPUT paired with the challenged output (the input
+                                  carrying the same request ID), binding the output
+                                  to a real, single-use request.
 ```
 
 The size-weighted random `(bucket, byte)` selection samples *transmitted bytes*
@@ -272,7 +275,8 @@ response, the certificate, and the request. The lane endpoints (`from/to network
 - **Record** is now `(length, packet_hash)` (was `(length, request_id,
   packet_hash)`) — enables random-position challenge openings without revealing
   unchallenged packets' metadata.
-- **Packet header** gains `bucket number` (design A) and `reference request ID`
-  (linked-list across turns).
+- **Packet header** gains `bucket number` (prover-declared bucket) and, on request
+  packets only, `reference request ID` (lets a request reuse data from a previous
+  request). Request and response are paired by `request ID`.
 - Consolidated the certificate fields, the challenge/opening protocol, the
   time-bracketing argument, and the dataflow into this one document.
