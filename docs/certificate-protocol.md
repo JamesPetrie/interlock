@@ -222,26 +222,31 @@ are each **shared** (multiple flows multiplexed onto one physical resource).
 
 ```mermaid
 flowchart TB
-    subgraph REQ["Request pipeline (network → prover)"]
-      direction BT
-      qi(["from network"]) --> qd["deframe"] --> qk["check len + request ID"] --> qp["ping-pong buffers"] --> qc["request commit"] --> qr["reframe"] --> qo(["to prover compute"])
-    end
-
-    subgraph RSP["Response pipeline (prover → network)"]
+    subgraph RSP["Response (prover → network)"]
       direction TB
       ri(["from prover compute"]) --> rd["deframe"] --> rk["check len + request ID"] --> rp["ping-pong buffers"] --> rc["response commit"] --> rr["reframe"] --> ro(["to network"])
     end
+    subgraph REQ["Request (network → prover)"]
+      direction BT
+      qi(["from network"]) --> qd["deframe"] --> qk["check len + request ID"] --> qp["ping-pong buffers"] --> qc["request commit"] --> qr["reframe"] --> qo(["to prover compute"])
+    end
+```
 
-    CERT["certificate"] --> co(["cert → network"])
-    rc -. response root .-> CERT
-    qc -. request root .-> CERT
-    qk -. nonce .-> CERT
+The certificate is fed by both commits plus the nonce, then emitted to the network
+(separate so the lanes above stay clean — both end at `prover compute` on top and
+`network` on the bottom):
+
+```mermaid
+flowchart LR
+    RC["response commit"] --> CERT["certificate"] --> NETC(["to network"])
+    QC["request commit"] --> CERT
+    NON["nonce (from request-pipeline check)"] --> CERT
 ```
 
 The two pipelines are **independent parallel lanes**, aligned so the **prover-compute
 side is at the top and the network/frontend side at the bottom of both**: the response
 lane flows down (compute → network) and the request lane flows up (network → compute).
-The certificate sits beside them, fed on dotted edges.
+The certificate (drawn separately, above) is fed by both commits plus the nonce.
 
 - **Request lane** (network → prover): `deframe → check → ping-pong → request
   commit → reframe`.
