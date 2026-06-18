@@ -255,13 +255,17 @@ not a boolean PASS). The resolved ZKP interface is §6.3.
 The prover and verifier are infproof (Ligero over the Goldilocks field). These resolve
 the open list for the initial single plaintext request→response pair.
 
-- **Challenge transport.** Out-of-band TCP from the app to the prover-compute box, keyed
-  by `request ID` plus the cert's `overall_req`/`overall_rsp` (so the prover answers
-  about the exact certified bytes). The prover returns `{transcript, proof,
-  public_inputs}` (and `revealed_key` only in the encrypted build). The proof is on the
-  order of 100 MB and takes minutes to generate, so make `challenge` async with a
-  progress indicator and a generous timeout; do not model it like the instant cert
-  checks.
+- **Challenge transport — IN-BAND (no WiFi).** The challenge and its status/result
+  travel as normal packets *through the interlock*, distinguished from inference by a
+  magic payload prefix (`MAGIC = b"ILKZKCTL"`; full framing in §9). The app sends a
+  CHALLENGE control packet (body = `request ID || req_cert || rsp_cert`) into port 0; the
+  model server on port 1 routes it to the handler, which recomputes `overall` + checks
+  `tau` against its stored packets, runs prove + verify + the plaintext match, and replies
+  with spaced STATUS packets then a RESULT (port 1 → port 0). This works because of
+  verify-on-Spark: the ~100 MB proof is generated AND verified on the Spark and **never
+  crosses the wire** — only the small control messages do. Make `challenge` async with a
+  progress display and a generous timeout (the proof takes minutes); status updates are
+  naturally seconds apart, so the one-packet-at-a-time rule is satisfied for free.
 
 - **What the proof proves.** A bound, not an equality: the response tokens are *well
   explained* by the declared model on the request tokens, with at most `U` bits of
@@ -350,19 +354,22 @@ reference code in `app/`; only `challenge.py` (#1) and a real `generate()` remai
   `verify` (local cert tau + overall) / `challenge` (out-of-band SSH to the Spark). The
   framing + cert parse/verify are the silicon-verified code; `overall()` reproduces the
   real cert hash exactly. Only the scapy transport is untested on macOS — adjust there.
-- `model_server.py` — Spark port-1 I/O wrapper (#2). AF_PACKET on the port-1 NIC; hands
-  the payload to a `generate()` hook (echo stub; the model agent swaps in real
-  decode → generate → encode) and sends the response back. **Verified end-to-end in
-  loopback** (below).
+- `model_server.py` — Spark port-1 I/O wrapper (#2) **+ in-band ZK control router**.
+  AF_PACKET on the port-1 NIC; routes by payload marker: inference → `generate()` hook
+  (echo stub; model agent swaps in real decode → generate → encode); ZK control →
+  `handle_challenge()` hook (stub emits spaced STATUS + RESULT; ZKP agent wires in
+  prove + verify + plaintext match). **Verified end-to-end in loopback** (below).
+- `zk_challenge_send.py` — sends one in-band CHALLENGE control packet (bring-up/test).
 - `cert_send_spaced.py`, `cert_parse.py` — the bring-up sender + cert decoder/verifier
   the above are built from (also on the Spark at `~/fpe/`).
 
 ### Demo wiring (real, two-box)
 
 - **MacBook = port 0** via its own USB-Ethernet/Thunderbolt adapter → `infcli.py`.
-- **Spark = port 1 = `enP7s7`** (built-in NIC) → `model_server.py` + `challenge.py`. The
-  Spark also holds the cert key + ZKP and runs the heavy verification (verify-on-Spark);
-  the MacBook does the cheap local cert check and triggers the rest over SSH.
+- **Spark = port 1 = `enP7s7`** (built-in NIC) → `model_server.py`, whose
+  `handle_challenge()` calls `challenge.py` (prove + verify). The Spark holds the cert key
+  + ZKP and runs the heavy verification (verify-on-Spark); the MacBook does the cheap
+  local cert check and triggers the rest **in-band** (no SSH/WiFi — see below).
 - When port 0's cable moves to the MacBook, the Spark's **`enxb8` dongle frees up** — it
   was port 0 / cert-egress only in the loopback wiring. Re-confirm orientation
   empirically after recabling (§2).
@@ -375,24 +382,46 @@ enables `PACKET_MR_PROMISC` (needs `CAP_NET_ADMIN` — run the container with
 `--cap-add NET_ADMIN` as well as `NET_RAW`). scapy's sniffer sets promisc itself, so the
 MacBook driver needs no special handling. (This bit us once during bring-up.)
 
-### Out-of-band challenge channel
+### In-band ZK control channel (no WiFi)
 
-From the MacBook: **`ssh claude@spark-c191.local`** (Bonjour/mDNS), or the Spark's WiFi
-IP. Plain ssh over WiFi — **no Tailscale on the Mac**, and fully off the interlock
-cable. Do **not** use `10.10.10.2`: that NIC is the interlock port-1 cable — unreachable
-from the Mac and not out-of-band. The WiFi IP is DHCP (churns on hotel WiFi), so prefer
-the `.local` name or pin a lease. `infcli.py challenge` shells out to this; point
-`--challenge-cmd` at `challenge.py`'s final signature, shipping the **certified packet +
-cert bytes** (not just tokens) so the Spark recomputes overall + checks tau + decrypts
-itself, keeping binding (b)/(d) tight.
+The challenge and its status/result travel as normal packets **through the interlock** —
+no out-of-band channel — distinguished from inference by a magic payload prefix
+`MAGIC = b"ILKZKCTL"`. The interlock forwards + certifies them like any packet; the
+inference-vs-control split is purely an endpoint convention between `infcli.py` (port 0)
+and `model_server.py` (port 1). This is practical because of verify-on-Spark: the
+~100 MB proof is generated AND verified on the Spark and never crosses the wire — only
+small control messages do.
+
+Control payload = `MAGIC(8) || type(1) || body_len(2 BE) || body`:
+- **CHALLENGE** (port 0 → 1): body = `request_id(8) || req_cert(148) || rsp_cert(148)`.
+  The model server routes it to `handle_challenge()` instead of `generate()`.
+- **STATUS** (port 1 → 0): UTF-8 progress lines, sent spaced as the proof runs.
+- **RESULT** (port 1 → 0): the verdict — PASS/FAIL, `U`, the challenged-packet plaintext
+  and the ZKP transcript plaintext + their match (§6.1). Chunk across spaced packets if
+  it exceeds one frame.
+
+Each control packet gets its own cert (harmless — the app ignores certs that don't match
+a logged inference packet). Spacing is automatic: status updates are seconds apart, far
+above the per-packet HMAC time. The model server retains processed request/response
+packets so the handler recomputes `overall` + decrypts against the certified bytes
+(binding (b)/(d)). WiFi/SSH is no longer required; if ever wanted as a fallback,
+`ssh claude@spark-c191.local` over WiFi works (not `10.10.10.2`, which rides the
+interlock cable).
 
 ### Verified loopback (2026-06-18)
 
-With both interlock ports on the Spark, `model_server.py` on `enP7s7` + 3 spaced
-requests into `enxb8`: the model server received all 3 requests and replied; port 0 saw
-**3 forwarded responses + 6 certificates (3 request + 3 response), 6/6 tau valid, 6/6
-overall bound**. So the whole request → forward → generate → response → cert → verify
-loop runs; swapping the MacBook onto port 0 and `generate()` for a real model are the
+With both interlock ports on the Spark (`model_server.py` on `enP7s7`, packets into
+`enxb8`):
+- **Inference loop:** 3 spaced requests → the model server received all 3 and replied;
+  port 0 saw **3 forwarded responses + 6 certificates (3 request + 3 response), 6/6 tau
+  valid, 6/6 overall bound**.
+- **In-band ZK control loop:** one CHALLENGE control packet into port 0 → the model
+  server routed it (`[challenge] body=8B`) and replied through the interlock with two
+  STATUS packets and a RESULT, all carrying the `ILKZKCTL` marker, captured on port 0.
+
+So both the request → forward → generate → response → cert → verify loop **and** the
+in-band challenge → status → result loop run end to end. Swapping the MacBook onto port 0,
+`generate()` for a real model, and `handle_challenge()` for real prove + verify are the
 remaining steps.
 
 ---

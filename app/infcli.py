@@ -30,7 +30,6 @@ import hmac
 import json
 import os
 import struct
-import subprocess
 import time
 
 SERVER = bytes.fromhex("020000000002")     # interlock forced SRC of port-0 egress (responses + certs)
@@ -39,6 +38,13 @@ HDR = 16
 CERT_LEN = 148
 DEFAULT_KEY = (2).to_bytes(32, "big")      # test-build cert key (cert_build .key(2))
 LOGDIR = os.path.expanduser("~/.infcli")
+
+# In-band ZK control protocol (payload-prefix marker; see model_server.py / spec §6,§9).
+# The challenge + status/result travel as normal packets through the interlock — no
+# out-of-band channel. The proof stays on the Spark (verify-on-Spark); only these small
+# control messages cross.
+MAGIC = b"ILKZKCTL"
+T_CHALLENGE, T_STATUS, T_RESULT = 1, 2, 3
 
 # ---------------- verified wire helpers (identical to the bring-up scripts) -------
 
@@ -166,21 +172,55 @@ def cmd_verify(a):
     _report(load(a.rid), a.key)
 
 def cmd_challenge(a):
+    """In-band challenge: send a CHALLENGE control packet through the interlock and
+    print the STATUS/RESULT control packets the Spark sends back. The proof is generated
+    AND verified on the Spark (verify-on-Spark) and never crosses the wire — only these
+    small control messages do, so no out-of-band/WiFi channel is needed."""
+    from scapy.all import AsyncSniffer, conf, Raw
     e = load(a.rid)
-    if not (e["request_cert"] and e["response_cert"] and e["response_data"]):
-        print("rid=%d incomplete (need both certs + response) — cannot challenge" % a.rid); return
-    # Ship the CERTIFIED bytes so the Spark recomputes overall + checks tau + decrypts
-    # itself (the binding stays tight — it does not trust our token extraction).
-    cmd = a.challenge_cmd.format(
-        req_packet=e["request_data"], rsp_packet=e["response_data"],
-        req_cert=e["request_cert"], rsp_cert=e["response_cert"])
-    ssh = ["ssh", "%s@%s" % (a.spark_user, a.spark_host), cmd]
-    print("challenge rid=%d -> %s@%s" % (a.rid, a.spark_user, a.spark_host))
-    print("$ " + " ".join(ssh[:2]) + " '<challenge.py ...>'")
-    r = subprocess.run(ssh, capture_output=True, text=True)
-    print(r.stdout)
-    if r.returncode != 0:
-        print("[ssh/challenge stderr]\n" + r.stderr)
+    if not (e["request_cert"] and e["response_cert"]):
+        print("rid=%d incomplete (need both certs) — cannot challenge" % a.rid); return
+    # body = request_id || req_cert || rsp_cert. The Spark recomputes overall + checks
+    # tau against its stored packets, runs prove+verify + plaintext match, and replies.
+    body = a.rid.to_bytes(8, "big") + ub(e["request_cert"]) + ub(e["response_cert"])
+    header = b"CHL\x00" + a.rid.to_bytes(4, "big") + b"\x00" * 8
+    payload = MAGIC + bytes([T_CHALLENGE]) + len(body).to_bytes(2, "big") + body
+    fr = frame(header + payload)
+
+    seen = set(); done = {"result": False}
+
+    def on_pkt(p):
+        b = bytes(p)
+        if b[6:12] != SERVER:
+            return
+        ln = int.from_bytes(b[12:14], "big")
+        pl = b[14 + HDR:14 + ln]
+        if pl[:len(MAGIC)] != MAGIC:                     # ignore inference responses + certs
+            return
+        mt = pl[len(MAGIC)]
+        bl = int.from_bytes(pl[len(MAGIC) + 1:len(MAGIC) + 3], "big")
+        txt = pl[len(MAGIC) + 3:len(MAGIC) + 3 + bl].decode("utf-8", "replace")
+        if (mt, txt) in seen:
+            return
+        seen.add((mt, txt))
+        if mt == T_STATUS:
+            print("  [status] " + txt, flush=True)
+        elif mt == T_RESULT:
+            print("  [RESULT] " + txt, flush=True); done["result"] = True
+
+    sniffer = AsyncSniffer(iface=a.iface, lfilter=lambda p: bytes(p)[6:12] == SERVER,
+                           prn=on_pkt, store=False)
+    sniffer.start(); time.sleep(0.3)
+    time.sleep(a.gap_ms / 1000.0)
+    conf.L2socket(iface=a.iface).send(Raw(load=fr))
+    print("challenge rid=%d sent in-band; awaiting status/result (timeout %ds)..."
+          % (a.rid, a.challenge_timeout))
+    deadline = time.time() + a.challenge_timeout
+    while time.time() < deadline and not done["result"]:
+        time.sleep(0.5)
+    sniffer.stop()
+    if not done["result"]:
+        print("  (timed out waiting for RESULT)")
 
 # ---------------- cli -------------------------------------------------------------
 
@@ -191,13 +231,8 @@ def main():
     p.add_argument("--wait-ms", type=int, default=2000, help="capture window after a send")
     p.add_argument("--key", default=DEFAULT_KEY.hex(), type=lambda s: ub(s),
                    help="cert HMAC key (hex); demo verifier holds it")
-    p.add_argument("--spark-host", default="spark-c191.local")
-    p.add_argument("--spark-user", default="claude")
-    p.add_argument("--challenge-cmd",
-                   default=("python3 ~/challenge.py --req-packet {req_packet} "
-                            "--rsp-packet {rsp_packet} --req-cert {req_cert} "
-                            "--rsp-cert {rsp_cert}"),
-                   help="remote command template (adapt to challenge.py's final signature)")
+    p.add_argument("--challenge-timeout", type=int, default=900,
+                   help="seconds to wait for the RESULT (the proof takes minutes)")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("send"); s.set_defaults(fn=cmd_send)
     g = s.add_mutually_exclusive_group(required=True)

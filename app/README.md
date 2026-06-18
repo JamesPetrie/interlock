@@ -5,8 +5,9 @@ holds the runnable reference code.
 
 | file | role | status |
 |---|---|---|
-| `infcli.py` | MacBook **port-0 driver** (#3): drive requests, capture + verify certs, `challenge` over SSH | logic validated vs. real cert hash; scapy transport untested on macOS |
-| `model_server.py` | Spark **port-1 I/O** (#2): receive request → `generate()` hook → respond | **verified end-to-end on silicon (loopback)** |
+| `infcli.py` | MacBook **port-0 driver** (#3): drive requests, capture + verify certs, `challenge` **in-band** | logic validated vs. real cert hash; scapy transport untested on macOS |
+| `model_server.py` | Spark **port-1 I/O** (#2) **+ in-band ZK control router**: inference → `generate()`, ZK control → `handle_challenge()` | **verified end-to-end on silicon (loopback)** |
+| `zk_challenge_send.py` | sends one in-band CHALLENGE control packet (bring-up/test) | verified on silicon |
 | `cert_send_spaced.py` | spaced one-at-a-time packet sender (bring-up) | verified on silicon |
 | `cert_parse.py` | certificate decoder + verifier (`tau` HMAC + `overall` hash) | verified on silicon (6/6) |
 
@@ -20,7 +21,7 @@ MacBook (port 0):
 pip install scapy
 sudo python3 infcli.py --iface en7 send --text "hello"
 sudo python3 infcli.py --iface en7 log
-sudo python3 infcli.py --iface en7 challenge 0 --spark-host spark-c191.local
+sudo python3 infcli.py --iface en7 challenge 0    # in-band over the interlock; no WiFi/SSH
 ```
 
 Spark (port 1), in a `NET_RAW`+`NET_ADMIN` container (promiscuous mode required):
