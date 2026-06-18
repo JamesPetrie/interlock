@@ -135,7 +135,9 @@ module payload_hash #(
         f_len[wptr] <= (cnt == '0) ? 16'(keep_cnt) : (f_len[wptr] + 16'(keep_cnt));
         cnt <= b_last ? '0 : (cnt + PW_W'(1));
         if (b_last) begin
-          f_swap[wptr] <= b_user[0];
+          //TODO
+          //f_swap[wptr] <= b_user[0];
+          f_swap[wptr] <= 1'b1;
           wptr <= ~wptr;
         end
       end

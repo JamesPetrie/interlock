@@ -112,10 +112,12 @@ module fabric_bridge (
     .dbg_eth_len   ()
   );
 
-  wire        req_tvalid_o, req_tready_o, req_tlast_o;
-  wire [31:0] req_tdata_o;
-  wire [3:0]  req_tkeep_o;
-  wire [15:0] req_tuser_o;
+  wire         req_tvalid_o, req_tready_o, req_tlast_o;
+  wire [31:0]  req_tdata_o;
+  wire [3:0]   req_tkeep_o;
+  wire [15:0]  req_tuser_o;
+  wire         req_ovr_valid;
+  wire [255:0] req_ovr_digest;
 
   traffic_hash #(
     .HDR_BYTES (16)
@@ -134,7 +136,8 @@ module fabric_bridge (
     .tkeep_m  (req_tkeep_o),
     .tlast_m  (req_tlast_o),
     .tuser_m  (req_tuser_o),
-    .overall  ()
+    .overall_valid (req_ovr_valid),
+    .overall       (req_ovr_digest)
   );
 
   eth_reframe #(
@@ -187,10 +190,12 @@ module fabric_bridge (
     .dbg_eth_len   ()
   );
 
-  wire        rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
-  wire [31:0] rsp_tdata_o;
-  wire [3:0]  rsp_tkeep_o;
-  wire [15:0] rsp_tuser_o;
+  wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
+  wire [31:0]  rsp_tdata_o;
+  wire [3:0]   rsp_tkeep_o;
+  wire [15:0]  rsp_tuser_o;
+  wire         rsp_ovr_valid;
+  wire [255:0] rsp_ovr_digest;
 
   traffic_hash #(
     .HDR_BYTES (16)
@@ -209,7 +214,73 @@ module fabric_bridge (
     .tkeep_m  (rsp_tkeep_o),
     .tlast_m  (rsp_tlast_o),
     .tuser_m  (rsp_tuser_o),
-    .overall  ()
+    .overall_valid (rsp_ovr_valid),
+    .overall       (rsp_ovr_digest)
+  );
+
+  // request pipeline certificate -> cert_merge
+  wire        reqc_tvalid, reqc_tready, reqc_tlast;
+  wire [31:0] reqc_tdata;
+  wire [3:0]  reqc_tkeep;
+  wire [15:0] reqc_tuser;
+
+  cert_build #() u_cert_req (
+    .clk (clk), .rst_n (rst_n), .key (2),
+    .in_valid_req (req_ovr_valid), .in_overall_req (req_ovr_digest), // pulse sink: cert period (~s) >> HMAC
+    .in_valid_rsp (1'b0), .in_overall_rsp ('0),
+    .in_nonce ('1),
+    .c_valid (reqc_tvalid), .c_ready (reqc_tready), .c_data (reqc_tdata),
+    .c_keep (reqc_tkeep), .c_last (reqc_tlast), .c_user (reqc_tuser)
+  );
+
+  // response pipeline certificate -> cert_merge
+  wire        rspc_tvalid, rspc_tready, rspc_tlast;
+  wire [31:0] rspc_tdata;
+  wire [3:0]  rspc_tkeep;
+  wire [15:0] rspc_tuser;
+
+  cert_build #() u_cert_rsp (
+    .clk (clk), .rst_n (rst_n), .key (2),
+    .in_valid_req (1'b0), .in_overall_req ('0), // pulse sink: cert period (~s) >> HMAC
+    .in_valid_rsp (rsp_ovr_valid), .in_overall_rsp (rsp_ovr_digest),
+    .in_nonce ('1),
+    .c_valid (rspc_tvalid), .c_ready (rspc_tready), .c_data (rspc_tdata),
+    .c_keep (rspc_tkeep), .c_last (rspc_tlast), .c_user (rspc_tuser)
+  );
+
+  // cert_merge -> response reframe
+  wire        mrg_tvalid, mrg_tready, mrg_tlast;
+  wire [31:0] mrg_tdata;
+  wire [3:0]  mrg_tkeep;
+  wire [15:0] mrg_tuser;
+
+  cert_merge u_cert_merge (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .tvalid_s0 (rsp_tvalid_o),
+    .tready_s0 (rsp_tready_o),
+    .tdata_s0  (rsp_tdata_o),
+    .tkeep_s0  (rsp_tkeep_o),
+    .tlast_s0  (rsp_tlast_o),
+    .tuser_s0  (rsp_tuser_o),
+    .tvalid_s1 (rspc_tvalid),
+    .tready_s1 (rspc_tready),
+    .tdata_s1  (rspc_tdata),
+    .tkeep_s1  (rspc_tkeep),
+    .tlast_s1  (rspc_tlast),
+    .tuser_s1  (rspc_tuser),
+    .tvalid_s2 (reqc_tvalid),
+    .tready_s2 (reqc_tready),
+    .tdata_s2  (reqc_tdata),
+    .tkeep_s2  (reqc_tkeep),
+    .tlast_s2  (reqc_tlast),
+    .tuser_s2  (reqc_tuser),
+    .tvalid_m  (mrg_tvalid),
+    .tready_m  (mrg_tready),
+    .tdata_m   (mrg_tdata),
+    .tkeep_m   (mrg_tkeep),
+    .tlast_m   (mrg_tlast),
+    .tuser_m   (mrg_tuser)
   );
 
   eth_reframe #(
@@ -218,12 +289,12 @@ module fabric_bridge (
   ) reframe_rsp (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (rsp_tvalid_o),
-    .tready        (rsp_tready_o),
-    .tdata         (rsp_tdata_o),
-    .tkeep         (rsp_tkeep_o),
-    .tlast         (rsp_tlast_o),
-    .tuser         (rsp_tuser_o),
+    .tvalid        (mrg_tvalid),
+    .tready        (mrg_tready),
+    .tdata         (mrg_tdata),
+    .tkeep         (mrg_tkeep),
+    .tlast         (mrg_tlast),
+    .tuser         (mrg_tuser),
     .out_rdy       (tse0_mtx_rdy),
     .out_acpt      (tse0_mtx_acpt),
     .out_sof       (tse0_mtx_sof),

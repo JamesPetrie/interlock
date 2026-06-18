@@ -52,6 +52,7 @@ module traffic_hash #(
   output wire        tlast_m,
   output wire [15:0] tuser_m,
 
+  output wire         overall_valid,
   output wire [255:0] overall
 );
 
@@ -87,7 +88,7 @@ module traffic_hash #(
   );
 
   logic [31:0] record_cnt;
-  wire record_last = (record_cnt == 5-1);
+  wire record_last = (record_cnt == 1-1);
 
   // count last-word *transfers*, not the unqualified so_olast.
   wire so_last_beat = so_ov && so_or && so_olast;
@@ -115,19 +116,7 @@ module traffic_hash #(
     .done (ovr_ov), .digest (ovr_od)
   );
 
-
-  logic [255:0] overall_r;
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      overall_r <= '0;
-    end else begin
-      if (ovr_ov) begin
-        overall_r <= ovr_od;
-      end
-    end
-  end
-
-  assign overall = overall_r;
+  assign overall_valid = ovr_ov;
+  assign overall       = ovr_od;
 
 endmodule

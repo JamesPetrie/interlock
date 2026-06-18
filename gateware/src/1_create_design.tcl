@@ -14,11 +14,14 @@ import_files -hdl_source {./src/src_hdl/eth_reframe.sv}
 import_files -hdl_source {./src/src_hdl/crypto/sha256_core.sv}
 import_files -hdl_source {./src/src_hdl/crypto/sha256_msg.sv}
 import_files -hdl_source {./src/src_hdl/crypto/sha256_pkg.sv}
+import_files -hdl_source {./src/src_hdl/crypto/hmac_sha256.sv}
 import_files -hdl_source {./src/src_hdl/axis_splitter.sv}
 import_files -hdl_source {./src/src_hdl/payload_hash.sv}
 import_files -hdl_source {./src/src_hdl/record_layer.sv}
 import_files -hdl_source {./src/src_hdl/serializer.sv}
 import_files -hdl_source {./src/src_hdl/traffic_hash.sv}
+import_files -hdl_source {./src/src_hdl/cert_build.sv}
+import_files -hdl_source {./src/src_hdl/cert_merge.sv}
 
 build_design_hierarchy
 
