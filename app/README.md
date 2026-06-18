@@ -3,6 +3,9 @@
 Full spec: [`../docs/inference-cli-app.md`](../docs/inference-cli-app.md). This dir
 holds the runnable reference code.
 
+**ZKP agent:** start at [`HANDOFF-ZKP.md`](HANDOFF-ZKP.md) — what's done, and the two
+things left to implement (`handle_challenge()` steps e/f/g, and a real `generate()`).
+
 | file | role | status |
 |---|---|---|
 | `infcli.py` | MacBook **port-0 driver** (#3): drive requests, capture + verify certs, `challenge` **in-band** | logic validated vs. real cert hash; scapy transport untested on macOS |

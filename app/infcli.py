@@ -180,9 +180,11 @@ def cmd_challenge(a):
     e = load(a.rid)
     if not (e["request_cert"] and e["response_cert"]):
         print("rid=%d incomplete (need both certs) — cannot challenge" % a.rid); return
-    # body = request_id || req_cert || rsp_cert. The Spark recomputes overall + checks
-    # tau against its stored packets, runs prove+verify + plaintext match, and replies.
-    body = a.rid.to_bytes(8, "big") + ub(e["request_cert"]) + ub(e["response_cert"])
+    # body = request_id || req_cert_DATA(148) || rsp_cert_DATA(148). The Spark recomputes
+    # overall + checks tau against its stored packets, runs prove+verify + match, replies.
+    rc, sc = parse_cert(ub(e["request_cert"])), parse_cert(ub(e["response_cert"]))
+    cdat = lambda c: b"\x00" * 16 + c["m"] + c["tau"]      # canonical 148B cert DATA
+    body = a.rid.to_bytes(8, "big") + cdat(rc) + cdat(sc)
     header = b"CHL\x00" + a.rid.to_bytes(4, "big") + b"\x00" * 8
     payload = MAGIC + bytes([T_CHALLENGE]) + len(body).to_bytes(2, "big") + body
     fr = frame(header + payload)
