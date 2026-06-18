@@ -191,6 +191,15 @@ keep the exact bytes so cert and proof checks are reproducible later.
 **Sending discipline:** never have more than one packet in flight; wait
 `gap-ms` (and ideally until the matching cert is captured) before sending the next.
 
+**Repo.** This app lives in its own standalone repo, because it composes two systems
+without belonging to either. It vendors the small cert send/parse/verify code from the
+interlock bring-up (§4) and consumes two stable artifacts from the ZKP repo: the
+`verify_proof` binary and a transcript extractor. Keeping it separate avoids coupling
+the gateware repo to the ZKP repo (and vice versa), and mirrors the production role
+split (§1): the prover frontend and the verifier are different parties. It can be seeded
+inside the gateware repo for Phase 0–1 (where the cert code already lives) and split out
+when the ZKP dependency lands at Phase 2.
+
 ---
 
 ## 6. Challenge → reveal → ZKP → match  *(the part you build on the ZKP side)*
@@ -235,27 +244,62 @@ and the user sees both plaintexts and their equality.
 If any step fails, the app must say *which* — e.g. "(e) MISMATCH: response plaintext ≠
 proof output" is a very different finding from "(f) proof invalid."
 
-### 6.3 Interface you need to define **[ZKP-agent decides]**
+**Prototype note (plaintext).** The initial target is plaintext payloads, so steps (c)
+and (d) drop out: the app reads the logged plaintext token ids directly. And (f) attests
+a *bound*, not an equality: the response is well explained by `Model(input)` to within
+`U` bits of unexplained information. Surface `U` in the report (it is the deliverable,
+not a boolean PASS). The resolved ZKP interface is §6.3.
 
-- **Challenge transport.** App → prover request identifying the packet (by request ID
-  **and** the cert's `overall_req`/`overall_rsp`, so the prover answers about the exact
-  certified bytes) and getting back `{revealed_key, transcript, proof, public_inputs}`.
-  Out-of-band TCP/gRPC to the prover-compute box is simplest; an in-band special packet
-  is also possible. Your call.
-- **What the proof proves.** At minimum: `transcript.output = Model(transcript.input)`
-  for the agreed model, plus whatever unexplained-information bound the repo already
-  establishes. Reuse the existing prover/verifier; this app only needs the verifier +
-  a way to extract/compare the transcript.
-- **Public-input encoding & binding.** The proof's public inputs must commit to the
-  transcript (and, ideally, directly to `overall_req`/`overall_rsp`) so that (g) is a
-  real check, not a trust step. Specify the exact encoding the app will compare against.
-- **Encryption scheme & key reveal.** Define `Decrypt`, how `recomputation_commitment`
-  commits the key (proto §2 suggests `H(key)`), and what "reveal" exposes for a
-  challenged packet vs. what stays zero-knowledge for un-challenged ones.
-- **Transcript ↔ packet alignment.** Specify how a (possibly multi-packet, multi-turn)
-  transcript maps to the single challenged packet — relevant once `reference request
-  ID` multi-turn flows (proto §2) are in play. For the initial single request→response
-  pair this is 1:1.
+### 6.3 ZKP-side interface (decided)
+
+The prover and verifier are infproof (Ligero over the Goldilocks field). These resolve
+the open list for the initial single plaintext request→response pair.
+
+- **Challenge transport.** Out-of-band TCP from the app to the prover-compute box, keyed
+  by `request ID` plus the cert's `overall_req`/`overall_rsp` (so the prover answers
+  about the exact certified bytes). The prover returns `{transcript, proof,
+  public_inputs}` (and `revealed_key` only in the encrypted build). The proof is on the
+  order of 100 MB and takes minutes to generate, so make `challenge` async with a
+  progress indicator and a generous timeout; do not model it like the instant cert
+  checks.
+
+- **What the proof proves.** A bound, not an equality: the response tokens are *well
+  explained* by the declared model on the request tokens, with at most `U` bits of
+  unexplained information (the repo's unexplained-information construction). Reuse
+  `verifier-rs/target/release/verify_proof` (pure Rust, CPU-only, deps
+  `blake3`/`rayon`/`serde_json`; cross-builds for macOS). Read step (f) as "output well
+  explained by `Model(input)`, `U` ≤ threshold," and report `U`.
+
+- **Public-input encoding & binding.** The proof's public claim list
+  (`proof["claims"]["claims"]`) is the transcript:
+  - **Input:** the `EmbeddingLookupClaim` carries the prompt `token_ids` as *subset
+    indices* into a re-indexed embedding table. The prover also returns the subset-vocab
+    map (subset index → real token id) so the app recovers real ids.
+  - **Output:** exposed by a fingerprint pin, `fp = Σ_i r_i · tok_i` over the committed
+    output tokens, revealed as one public scalar (`r` challenge-derived). The app
+    recomputes `fp` over the logged response tokens and checks equality — the output
+    half of (e)/(g).
+  - **Bound `U`:** the `AddClaim` reveal pin exposes it as a public value.
+  - **Binding (g) is through the app, not in-circuit.** The app is the common point:
+    (b) ties the cert to the logged payload, and (e) ties that payload's tokens to the
+    proof's public tokens (input ids directly, output via the fingerprint). That
+    transitively binds the proof to the certified bytes with no in-circuit hashing.
+    Committing the proof *directly* to `overall_req`/`overall_rsp` (in-circuit SHA over
+    the wire bytes) is the stronger production binding and is deferred.
+  - A **transcript extractor** (parses the proof JSON: input ids + subset map + output
+    fingerprint + `U`) ships with the app from the ZKP repo.
+
+- **Encryption & key reveal.** Prototype: **plaintext payloads**, so steps (c) and (d)
+  drop out and the app reads the logged token ids directly. Production (encrypted):
+  `recomputation_commitment = H(key)` is ~32 bytes and does not fit the 16-byte header,
+  so widen `HDR_BYTES` (or carry the commitment outside the header) before relying on
+  (c). The ZKP side is unaffected by encryption either way.
+
+- **Transcript ↔ packet alignment.** 1:1 for the single pair. The canonical payload **is**
+  the token-id array in a fixed encoding (e.g. little-endian `uint32`, in order), so
+  decrypt/log → token ids → compare to the proof's public ids. Pin this serialization; it
+  is the binding. Multi-packet / multi-turn (`reference request ID`) maps several packets
+  to one transcript later, without a format change.
 
 ---
 
@@ -295,7 +339,65 @@ and costs a power cycle (§2).
 
 ---
 
-## 9. References
+## 9. Reference implementation, demo wiring & out-of-band challenge
+
+The frontend driver (#3) and the port-1 model-server I/O (#2) exist as runnable
+reference code in `app/`; only `challenge.py` (#1) and a real `generate()` remain.
+
+### Files (`app/`)
+
+- `infcli.py` — MacBook port-0 driver (#3). scapy/libpcap. `send` / `log` / `show` /
+  `verify` (local cert tau + overall) / `challenge` (out-of-band SSH to the Spark). The
+  framing + cert parse/verify are the silicon-verified code; `overall()` reproduces the
+  real cert hash exactly. Only the scapy transport is untested on macOS — adjust there.
+- `model_server.py` — Spark port-1 I/O wrapper (#2). AF_PACKET on the port-1 NIC; hands
+  the payload to a `generate()` hook (echo stub; the model agent swaps in real
+  decode → generate → encode) and sends the response back. **Verified end-to-end in
+  loopback** (below).
+- `cert_send_spaced.py`, `cert_parse.py` — the bring-up sender + cert decoder/verifier
+  the above are built from (also on the Spark at `~/fpe/`).
+
+### Demo wiring (real, two-box)
+
+- **MacBook = port 0** via its own USB-Ethernet/Thunderbolt adapter → `infcli.py`.
+- **Spark = port 1 = `enP7s7`** (built-in NIC) → `model_server.py` + `challenge.py`. The
+  Spark also holds the cert key + ZKP and runs the heavy verification (verify-on-Spark);
+  the MacBook does the cheap local cert check and triggers the rest over SSH.
+- When port 0's cable moves to the MacBook, the Spark's **`enxb8` dongle frees up** — it
+  was port 0 / cert-egress only in the loopback wiring. Re-confirm orientation
+  empirically after recabling (§2).
+
+### Port-1 model server needs PROMISCUOUS mode
+
+Forwarded requests are addressed to the interlock's forced DST `02:..:02`, not the host
+NIC's MAC, so the kernel drops them before a plain AF_PACKET socket. `model_server.py`
+enables `PACKET_MR_PROMISC` (needs `CAP_NET_ADMIN` — run the container with
+`--cap-add NET_ADMIN` as well as `NET_RAW`). scapy's sniffer sets promisc itself, so the
+MacBook driver needs no special handling. (This bit us once during bring-up.)
+
+### Out-of-band challenge channel
+
+From the MacBook: **`ssh claude@spark-c191.local`** (Bonjour/mDNS), or the Spark's WiFi
+IP. Plain ssh over WiFi — **no Tailscale on the Mac**, and fully off the interlock
+cable. Do **not** use `10.10.10.2`: that NIC is the interlock port-1 cable — unreachable
+from the Mac and not out-of-band. The WiFi IP is DHCP (churns on hotel WiFi), so prefer
+the `.local` name or pin a lease. `infcli.py challenge` shells out to this; point
+`--challenge-cmd` at `challenge.py`'s final signature, shipping the **certified packet +
+cert bytes** (not just tokens) so the Spark recomputes overall + checks tau + decrypts
+itself, keeping binding (b)/(d) tight.
+
+### Verified loopback (2026-06-18)
+
+With both interlock ports on the Spark, `model_server.py` on `enP7s7` + 3 spaced
+requests into `enxb8`: the model server received all 3 requests and replied; port 0 saw
+**3 forwarded responses + 6 certificates (3 request + 3 response), 6/6 tau valid, 6/6
+overall bound**. So the whole request → forward → generate → response → cert → verify
+loop runs; swapping the MacBook onto port 0 and `generate()` for a real model are the
+remaining steps.
+
+---
+
+## 10. References
 
 - `certificate-protocol.md` — packet/cert formats, challenge protocol, time-bracketing,
   prover↔interlock dataflow (the protocol this app instantiates).
