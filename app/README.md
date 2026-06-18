@@ -91,9 +91,11 @@ session — request + response + ~30 streamed control packets — the interlock 
 issuing certificates for new client packets (both NICs stayed healthy, zero errors). This
 is the documented "control traffic can wedge the bridge; needs a reset" mode.
 
-To reset on the Spark (reflashes the FPGA, ~5 min — `~/fpe`):
+To reset, reflash the FPGA (~5 min) — the flash runs in the x86 QEMU VM, so use the
+namespace-crossing helper, then re-run `server_run.sh`. Full procedure:
+[`../docs/flashing-the-interlock.md`](../docs/flashing-the-interlock.md).
 ```
-bash ~/fpe/launch_program.sh        # then wait for prog.out to finish; re-run server_run.sh
+bash ~/flash_drive.sh launch && bash ~/flash_drive.sh wait   # "Chain programming PASSED"
 ```
 If the bridge proves sensitive to the streamed progress, thin the in-band control traffic
 with `CHALLENGE_STATUS_SECS` (server env, default 15 s) — fewer status packets per proof.
