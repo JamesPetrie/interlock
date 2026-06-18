@@ -1,40 +1,84 @@
 # Interlock inference CLI app — reference implementation
 
-Full spec: [`../docs/inference-cli-app.md`](../docs/inference-cli-app.md). This dir
-holds the runnable reference code.
+Full spec: [`../docs/inference-cli-app.md`](../docs/inference-cli-app.md). This dir holds
+the runnable reference code: a multi-turn Llama-2-7b chat that runs over the interlock,
+with an in-band zero-knowledge proof you can trigger mid-conversation. The model runs, the
+proof is generated, and the proof is **verified — all on the Spark**; only small control
+messages cross the wire (no out-of-band/WiFi/SSH channel).
 
-**ZKP agent:** start at [`HANDOFF-ZKP.md`](HANDOFF-ZKP.md) — what's done, and the two
-things left to implement (`handle_challenge()` steps e/f/g, and a real `generate()`).
+| file | role |
+|---|---|
+| `infcli.py` | client (port 0): multi-turn `chat`, certificate verify, in-band `challenge`, combined cert+proof panel |
+| `model_server.py` | server (port 1): greedy `generate()` (HF Llama-2-7b) + in-band ZK router `handle_challenge()` |
+| `server_run.sh` | launch the server in one GPU container (model + prover + verifier) |
+| `client_run.sh` / `loopback_run.sh` | launch the chat / a scripted one-shot client in a container (Spark loopback) |
+| `loopback_demo.py` | non-interactive driver: one prompt → response → challenge → panel |
+| `cert_parse.py`, `cert_send_spaced.py`, `zk_challenge_send.py` | cert decode + bring-up senders (verified on silicon) |
 
-| file | role | status |
-|---|---|---|
-| `infcli.py` | MacBook **port-0 driver** (#3): drive requests, capture + verify certs, `challenge` **in-band** | logic validated vs. real cert hash; scapy transport untested on macOS |
-| `model_server.py` | Spark **port-1 I/O** (#2) **+ in-band ZK control router**: inference → `generate()`, ZK control → `handle_challenge()` | **verified end-to-end on silicon (loopback)** |
-| `zk_challenge_send.py` | sends one in-band CHALLENGE control packet (bring-up/test) | verified on silicon |
-| `cert_send_spaced.py` | spaced one-at-a-time packet sender (bring-up) | verified on silicon |
-| `cert_parse.py` | certificate decoder + verifier (`tau` HMAC + `overall` hash) | verified on silicon (6/6) |
+The proof itself lives in the `infproof` repo: `model_server.py` shells out to
+`infproof/analysis/interlock_challenge.py` (`CHALLENGE_PY`), which proves the
+unexplained-information bound, runs the standalone Rust verifier, and binds the proof's
+public output token-ids to the certified response.
 
-Remaining: `challenge.py` (ZKP side, infproof — see spec §6.3) and a real `generate()`
-(model agent) replacing the echo stub.
+## How the binding works
 
-## Quick start
+The wire payload is **never text** — it is the canonical token-id array (little-endian
+uint32). The client tokenizes locally and sends ids; the model only ever sees ids; the
+proof runs on ids. So the **same bytes** flow through three independent checks:
 
-MacBook (port 0):
+1. the interlock **certificate** binds the request/response payload (per-packet HMAC + hash);
+2. `generate()` produces the response **from** the request ids (greedy/argmax → U ≈ 0);
+3. the **ZK proof** runs on `store[overall_req]`/`store[overall_rsp]` (the certified bytes)
+   and reveals the output ids as public constraints.
+
+The client's `/prove` panel shows the certificate and the proof side by side and confirms
+`H(local request payload) == H(proof request payload)` (and likewise for the response) — so
+the bytes the interlock certified are exactly the bytes the proof ran on.
+
+## Run it — Spark loopback (both interlock ports on the Spark)
+
+Terminal A — server on port 1 (`enP7s7`):
 ```
-pip install scapy
-sudo python3 infcli.py --iface en7 send --text "hello"
-sudo python3 infcli.py --iface en7 log
-sudo python3 infcli.py --iface en7 challenge 0    # in-band over the interlock; no WiFi/SSH
+bash server_run.sh                       # sound proof (T=80); MAX_NEW_TOKENS=64
+CHALLENGE_TQ=4 MAX_NEW_TOKENS=24 bash server_run.sh    # fast/dev while iterating
 ```
 
-Spark (port 1), in a `NET_RAW`+`NET_ADMIN` container (promiscuous mode required):
+Terminal B — interactive chat on port 0 (`enxb8fbb3b1f53c`):
 ```
-docker run --rm --network host --cap-add NET_RAW --cap-add NET_ADMIN -v $PWD:/app \
-  python:3-slim python3 /app/model_server.py enP7s7
+bash client_run.sh enxb8fbb3b1f53c
+  you> What is the capital of France?
+  bot> Paris. ...
+  you> /prove          # in-band ZK proof of the last turn; streams status, prints the panel
+  you> /reset          # clear the conversation context
+  you> /quit
 ```
+
+Or a one-shot, non-interactive check:
+```
+bash loopback_run.sh enxb8fbb3b1f53c
+```
+
+## Run it — MacBook client + Spark server
+
+Spark: `bash server_run.sh` (as above). Mac (scapy needs root for `/dev/bpf`; no docker):
+```
+pip3 install scapy transformers          # transformers = tokenizer only, no torch/GPU
+sudo python3 infcli.py --iface en7 --model ~/models/llama-2-7b-hf chat
+```
+The Mac needs the Llama-2-7b tokenizer files (the `--model` dir, or any dir with
+`tokenizer.model`/`tokenizer.json`); it does **not** run the model. Low-level commands
+still work: `send --text`, `log`, `show <rid>`, `verify <rid>`, `challenge <rid>`.
 
 ## Hard rule
 
-One packet in flight at a time, spaced (default 300 ms). The per-packet cert HMAC has
-no back-pressure; a flood wedges the interlock and needs a power cycle. Both the sender
-and the model server are single-in-flight by construction — keep them that way.
+One packet in flight at a time, spaced (default 300 ms). The per-packet cert HMAC has no
+back-pressure; a flood wedges the interlock and needs a power cycle. Both the client and
+the server are single-in-flight by construction, and the server spaces its control
+replies (`CTL_GAP`) — keep them that way.
+
+## Deployment note
+
+The server is one `nvcr.io/nvidia/pytorch:25.11-py3` container with `--gpus all`
+(generate + prove + verify), `--network host`, and `--cap-add NET_RAW --cap-add NET_ADMIN`
+(raw L2 + promiscuous). Validated on the DGX Spark (GB10, sm_121): the CUDA-JIT prover and
+the host-built Rust verifier both run inside this image.

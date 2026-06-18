@@ -76,11 +76,44 @@ def cert_tau_ok(c, key=KEY):
 
 # --------------------------- hooks the other agents fill ----------------------------
 
+_MODEL = {"tok": None, "model": None}     # lazily loaded HF Llama-2-7b (greedy decode)
+
+
+def _load_model():
+    if _MODEL["model"] is None:
+        import os as _os, torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        path = _os.environ.get("MODEL_DIR", "/models/llama-2-7b-hf")
+        print("[generate] loading %s ..." % path, flush=True)
+        _MODEL["tok"] = AutoTokenizer.from_pretrained(path)
+        _MODEL["model"] = AutoModelForCausalLM.from_pretrained(
+            path, torch_dtype=torch.float16).to("cuda").eval()
+        print("[generate] model ready", flush=True)
+    return _MODEL["tok"], _MODEL["model"]
+
+
 def generate(req_header: bytes, req_ciphertext: bytes):
-    """STUB — MODEL AGENT replaces. Echo keeps the loop testable with no model.
-    Real: decrypt -> request token-ids -> HF generate -> response token-ids -> encrypt,
-    copying the request ID into rsp_header."""
-    return req_header, req_ciphertext
+    """Greedy (argmax) Llama-2-7b continuation. The payload is the canonical token-id
+    array (LE uint32, inference-cli-app.md §6.3): read ids -> greedy-decode K new ids ->
+    return them as the response payload, keeping the request header so the client matches
+    the response. Token<->text stays on the CLIENT; this side only ever handles ids, so
+    this forward, the certificate, and the ZK proof all bind the *same* token ids. Pure
+    argmax (do_sample=False) is what makes the proof's unexplained information U ~ 0."""
+    import os as _os, struct as _st, torch
+    n = len(req_ciphertext) // 4
+    in_ids = list(_st.unpack("<%dI" % n, req_ciphertext[:4 * n])) if n else []
+    if not in_ids:                                  # nothing to condition on -> echo
+        return req_header, req_ciphertext
+    tok, model = _load_model()
+    k = int(_os.environ.get("MAX_NEW_TOKENS", "64"))
+    ids = torch.tensor([in_ids], dtype=torch.long, device="cuda")
+    with torch.no_grad():
+        out = model.generate(ids, max_new_tokens=k, do_sample=False, num_beams=1,
+                             pad_token_id=tok.eos_token_id)
+    new_ids = out[0, len(in_ids):].tolist()
+    rsp_ct = b"".join(_st.pack("<I", t & 0xFFFFFFFF) for t in new_ids)
+    print("[generate] %d in -> %d out ids (greedy)" % (len(in_ids), len(new_ids)), flush=True)
+    return req_header, rsp_ct                        # keep req header -> client matches rid
 
 
 def handle_challenge(send, header, body, store, key=KEY):
@@ -131,9 +164,11 @@ def handle_challenge(send, header, body, store, key=KEY):
         "CHALLENGE_PY",
         "/home/claude/venv-hf/bin/python -u /home/claude/infproof/analysis/interlock_challenge.py"
     ).split() + ["--request", ",".join(map(str, req_ids)),
-                 "--response", ",".join(map(str, rsp_ids))]
+                 "--response", ",".join(map(str, rsp_ids)),
+                 "--t-queries", _os.environ.get("CHALLENGE_TQ", "80")]
     send(T_STATUS, b"proving + verifying on the Spark (minutes; proof stays here)")
-    v, last = {"verdict": "FAIL", "U": "NA", "verify": "?", "out_bind": "?"}, 0.0
+    v, last = {"verdict": "FAIL", "U": "NA", "verify": "?", "out_bind": "?",
+               "hreq": "", "hrsp": ""}, 0.0
     proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
     for line in proc.stdout:
         line = line.rstrip()
@@ -143,17 +178,13 @@ def handle_challenge(send, header, body, store, key=KEY):
         elif (line[:1] == "[" or "verify]" in line) and time.time() - last > 15:
             send(T_STATUS, ("  " + line[:90]).encode("ascii", "replace")); last = time.time()
     proc.wait()
-    ok = (v["verdict"] == "PASS")
-    # RESULT (spec §6.1): PASS/FAIL, U, the plaintext, and the input/output match.
-    out = "\n".join([
-        ("PASS" if ok else "FAIL") + "  U=" + v["U"] + " bits",
-        "prompt     : " + ",".join(map(str, req_ids)),
-        "completion : " + ",".join(map(str, rsp_ids)),
-        "zkp.verify : " + v["verify"],
-        "zkp.output : out_ids bind " + v["out_bind"] + " (public ids == response targets)",
-    ]).encode("ascii", "replace")
-    for i in range(0, len(out), 1400):                # chunk to one frame each, spaced
-        send(T_RESULT, out[i:i + 1400])
+    # RESULT (spec §6.1): one compact, single-frame key=value line. The client already
+    # holds the prompt/completion ids (it sent them); hreq/hrsp let it prove the proof ran
+    # on the SAME bytes the certificate bound, without echoing the (growing) id lists.
+    out = ("verdict=%s U=%s verify=%s out_bind=%s hreq=%s hrsp=%s" % (
+        v["verdict"], v["U"], v["verify"], v["out_bind"], v["hreq"], v["hrsp"])
+    ).encode("ascii", "replace")
+    send(T_RESULT, out)                               # < 200 B -> always one frame
     # ====================================================================================
 
 
@@ -185,6 +216,16 @@ def main():
         store[overall_of(data)] = data
         while len(store) > STORE_MAX:
             store.popitem(last=False)
+
+    # Eager model load (PRELOAD_MODEL=1) so the FIRST request isn't slowed by a ~13 GB
+    # weight load while the client's capture window is open. Soft-fail to lazy/echo if
+    # torch isn't present (e.g. a cert-only bring-up in a slim container).
+    import os as _os
+    if _os.environ.get("PRELOAD_MODEL", "0") == "1":
+        try:
+            _load_model()
+        except Exception as ex:                # noqa: BLE001 — keep the server up regardless
+            print("[generate] preload skipped (%s); falling back to lazy/echo" % ex, flush=True)
 
     print("model_server on %s: inference + in-band ZK control "
           "(DST %s SRC %s)" % (IFACE, SERVER.hex(), CLIENT.hex()), flush=True)
