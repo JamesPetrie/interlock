@@ -214,58 +214,60 @@ have inserted in that window.
 
 ## 8. Prover ↔ interlock dataflow
 
-Two mirrored pipelines (request and response), each `deframe → check length +
-request ID → ping-pong buffers → commit → reframe`. A `certificate` node bridges
-them, fed by the response commit, the request commit, and the nonce (from a
-check-length stage). The link to the prover compute and the link to the network
-are each **shared** (multiple flows multiplexed onto one physical resource).
+The interlock sits between the **prover compute** (the AI) and the **prover
+frontend** (record-keeping + ethernet, §7). Two pipelines carry traffic between
+them — a **request** path (frontend → compute) and a **response** path (compute →
+frontend) — each running `deframe → check length + request ID → information
+isolation → commit → reframe`. **The two paths are not symmetric:** the commit
+(certificate generation) sits on the **prover-frontend side** of the isolation
+barrier in *both* directions, so it lands *before* isolation on the request path and
+*after* it on the response path.
 
 ```mermaid
 flowchart TB
-    subgraph RSP["Response (prover → network)"]
+    subgraph RSP["Response — compute → frontend"]
       direction TB
-      ri(["from prover compute"]) --> rd["deframe"] --> rk["check len + request ID"] --> rp["ping-pong buffers"] --> rc["response commit"] --> rr["reframe"] --> ro(["to network"])
+      ri(["from prover compute"]) --> rd["deframe"] --> rk["check len + request ID"] --> riso["information isolation"] --> rc["response commit"] --> rr["reframe"] --> ro(["to prover frontend"])
     end
-    subgraph REQ["Request (network → prover)"]
+    subgraph REQ["Request — frontend → compute"]
       direction BT
-      qi(["from network"]) --> qd["deframe"] --> qk["check len + request ID"] --> qp["ping-pong buffers"] --> qc["request commit"] --> qr["reframe"] --> qo(["to prover compute"])
+      qi(["from prover frontend"]) --> qd["deframe"] --> qk["check len + request ID"] --> qc["request commit"] --> qiso["information isolation"] --> qr["reframe"] --> qo(["to prover compute"])
     end
 ```
 
-The certificate is fed by both commits plus the nonce, then emitted to the network
-(separate so the lanes above stay clean — both end at `prover compute` on top and
-`network` on the bottom):
+The lanes are aligned so **prover compute is at the top and the prover frontend at
+the bottom of both**: the response flows down, the request flows up, and (because the
+commit is pinned to the frontend side) both `commit` boxes sit near the bottom — on
+the request lane just *above* `from prover frontend`, on the response lane just
+*below* `information isolation`.
+
+The certificate is built from both commits plus the nonce and emitted to the prover
+frontend — drawn separately so the lanes above stay edge-free:
 
 ```mermaid
 flowchart LR
-    RC["response commit"] --> CERT["certificate"] --> NETC(["to network"])
-    QC["request commit"] --> CERT
-    NON["nonce (from request-pipeline check)"] --> CERT
+    QC["request commit"] --> CERT["certificate"]
+    RC["response commit"] --> CERT
+    NON["nonce (from a check stage)"] --> CERT
+    CERT --> FE(["to prover frontend"])
 ```
 
-The two pipelines are **independent parallel lanes**, aligned so the **prover-compute
-side is at the top and the network/frontend side at the bottom of both**: the response
-lane flows down (compute → network) and the request lane flows up (network → compute).
-The certificate (drawn separately, above) is fed by both commits plus the nonce.
+Two design points the diagram encodes:
 
-- **Request lane** (network → prover): `deframe → check → ping-pong → request
-  commit → reframe`.
-- **Response lane** (prover → network): `deframe → check → ping-pong → response
-  commit → reframe`.
-- **Certificate**: produced from the response commit + request commit + the nonce
-  (taken from the request-pipeline check stage), emitted to the network.
-- The **ping-pong buffers** are identical double-buffers on both lanes.
+- **Information isolation** (the per-lane ping-pong double-buffers) is the barrier
+  between the prover-compute side and the prover-frontend side. It decouples timing
+  across the boundary so neither side can signal the other except through the
+  committed canonical channel — telemetry, back-pressure, and timing are all closed.
+- **Commit on the prover-frontend side, both directions.** The certificate must bind
+  exactly what the prover frontend records: what it **sends** (the request, committed
+  before it crosses into compute) and what it **receives** (the response, committed
+  after it crosses back). Keeping both commits on the frontend side of the isolation
+  barrier is what lets the frontend's log recreate the certificate byte-for-byte
+  (§7), while isolation stops the compute side from tampering with either commitment.
+  This is the asymmetry: **request commits before isolation, response commits after.**
 
-**Shared physical links** (kept out of the diagram so the lanes stay parallel): the
-**prover-compute side** (top) is one shared ethernet link carrying the request (to
-compute) and the response (from compute); the **network side** (bottom) is one shared
-bus carrying the response, the certificate, and the request. The lane endpoints
-(`from/to network`, `from/to prover compute`, `cert → network`) mark where each lane
-taps those links.
-
-> **To confirm:** (i) whether the nonce is taken from the request-pipeline check
-> stage or a dedicated stage; (ii) whether the network-side bus's three flows
-> (response, certificate, request) share one physical link while staying logically
-> separate (assumed here) vs. a single merged output. The unlabeled fan-out boxes
-> are the ping-pong double-buffers.
+> **To confirm:** (i) whether the nonce is taken from a pipeline check stage or a
+> dedicated stage; (ii) whether the frontend-side flows (response, certificate,
+> request) share one physical link while staying logically separate (assumed here)
+> vs. a single merged output.
 
