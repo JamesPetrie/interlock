@@ -28,9 +28,12 @@ marked **[ZKP-agent decides]**.
 
 Roles (these mirror `certificate-protocol.md` §7):
 
-- **MacBook / CLI app = prover frontend.** Originates inference *requests*, receives
-  *responses* + *certificates*, keeps the full log (record-keeping), verifies certs,
-  and issues challenges. It is the only piece you build here.
+- **MacBook / CLI app = prover frontend *and* (for this demo) the verifier.**
+  Originates inference *requests*, receives *responses* + *certificates*, keeps the
+  full log (record-keeping), and — because it also plays the verifier here — **holds
+  the cert HMAC key and fully verifies every certificate** before issuing challenges.
+  It is the only piece you build. (In production these two roles separate: the verifier
+  that provisioned the interlock holds the key; the prover frontend does not — see §3.)
 - **Interlock (MPF300).** Canonicalizes both directions and emits **one signed
   certificate per packet**. Fixed; treat as a black box with the wire contract in §2–§3.
 - **Prover compute.** Runs the model (produces responses) and, on challenge, reveals
@@ -101,11 +104,13 @@ Cert frame on the wire (egresses port 0; DST `02:..:01`, SRC `02:..:02`, **802.3
 
 - **Request cert** ⇒ `overall_rsp == 0`. **Response cert** ⇒ `overall_req == 0`.
 - The **signed message** is `m = DATA[16:116]` (version … nonce, 100 bytes).
-- **HMAC key.** The interlock holds the cert key and it never leaves the device. In
-  the **test build the key is the constant `0x00…02`** (`cert_build .key(2)`), so the
-  app can check `tau` locally. In production, HMAC verification belongs to the
-  key-holding verifier who provisioned the interlock; design the app so the key is a
-  configured secret, not baked in.
+- **HMAC key.** The interlock holds the cert key and it never leaves the device. **For
+  this demo the MacBook also holds the verifier role, so it is given the cert key and
+  checks `tau` directly** — in the test build that key is the constant `0x00…02`
+  (`cert_build .key(2)`). Keep it a configured secret (not baked in): in production the
+  verifier role — and the key — live with the party that provisioned the interlock,
+  separate from the prover frontend, and the frontend would treat the cert as an opaque
+  attestation it forwards rather than checks.
 
 ### Hash hierarchy (verified — the app must recompute this)
 
