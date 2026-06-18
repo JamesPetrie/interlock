@@ -63,11 +63,17 @@ bash loopback_run.sh enxb8fbb3b1f53c
 Spark: `bash server_run.sh` (as above). Mac (scapy needs root for `/dev/bpf`; no docker):
 ```
 pip3 install scapy transformers          # transformers = tokenizer only, no torch/GPU
+
+# the Mac runs the tokenizer, not the model — grab just the tokenizer files (~700 KB):
+mkdir -p ~/models/llama-2-7b-hf
+scp claude@spark-c191:~/llama2-tokenizer.tgz /tmp/ && \
+  tar -xzf /tmp/llama2-tokenizer.tgz -C ~/models/llama-2-7b-hf
+
 sudo python3 infcli.py --iface en7 --model ~/models/llama-2-7b-hf chat
 ```
-The Mac needs the Llama-2-7b tokenizer files (the `--model` dir, or any dir with
-`tokenizer.model`/`tokenizer.json`); it does **not** run the model. Low-level commands
-still work: `send --text`, `log`, `show <rid>`, `verify <rid>`, `challenge <rid>`.
+`--iface en7` is the Mac's interlock-facing Ethernet (check `ifconfig`). The Mac does
+**not** run the model. Low-level commands still work: `send --text`, `log`,
+`show <rid>`, `verify <rid>`, `challenge <rid>`.
 
 ## Hard rule
 
@@ -75,6 +81,23 @@ One packet in flight at a time, spaced (default 300 ms). The per-packet cert HMA
 back-pressure; a flood wedges the interlock and needs a power cycle. Both the client and
 the server are single-in-flight by construction, and the server spaces its control
 replies (`CTL_GAP`) — keep them that way.
+
+## Operational note — interlock reset between sessions
+
+In a full loopback run on 2026-06-18 the demo passed end to end (forwarding, both certs
+`tau`/`overall` PASS, greedy generate, in-band `/prove` streaming, Rust verify ACCEPT,
+combined panel with request+response `H(local)==H(proof)` MATCH). **After** that complete
+session — request + response + ~30 streamed control packets — the interlock stopped
+issuing certificates for new client packets (both NICs stayed healthy, zero errors). This
+is the documented "control traffic can wedge the bridge; needs a reset" mode.
+
+To reset on the Spark (reflashes the FPGA, ~5 min — `~/fpe`):
+```
+bash ~/fpe/launch_program.sh        # then wait for prog.out to finish; re-run server_run.sh
+```
+If the bridge proves sensitive to the streamed progress, thin the in-band control traffic
+with `CHALLENGE_STATUS_SECS` (server env, default 15 s) — fewer status packets per proof.
+The proof always streams start/`a,b OK`/done plus the final RESULT regardless.
 
 ## Deployment note
 

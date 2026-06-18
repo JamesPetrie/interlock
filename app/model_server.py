@@ -106,10 +106,14 @@ def generate(req_header: bytes, req_ciphertext: bytes):
         return req_header, req_ciphertext
     tok, model = _load_model()
     k = int(_os.environ.get("MAX_NEW_TOKENS", "64"))
+    stop = _os.environ.get("STOP", "").replace("\\n", "\n")     # e.g. STOP='\nQuestion:'
+    gen_kw = dict(max_new_tokens=k, do_sample=False, num_beams=1,
+                  pad_token_id=tok.eos_token_id)
+    if stop:                                                    # end the turn cleanly
+        gen_kw.update(stop_strings=[stop], tokenizer=tok)
     ids = torch.tensor([in_ids], dtype=torch.long, device="cuda")
     with torch.no_grad():
-        out = model.generate(ids, max_new_tokens=k, do_sample=False, num_beams=1,
-                             pad_token_id=tok.eos_token_id)
+        out = model.generate(ids, **gen_kw)
     new_ids = out[0, len(in_ids):].tolist()
     rsp_ct = b"".join(_st.pack("<I", t & 0xFFFFFFFF) for t in new_ids)
     print("[generate] %d in -> %d out ids (greedy)" % (len(in_ids), len(new_ids)), flush=True)
@@ -167,6 +171,10 @@ def handle_challenge(send, header, body, store, key=KEY):
                  "--response", ",".join(map(str, rsp_ids)),
                  "--t-queries", _os.environ.get("CHALLENGE_TQ", "80")]
     send(T_STATUS, b"proving + verifying on the Spark (minutes; proof stays here)")
+    # Cadence of streamed progress STATUS packets. Each control reply traverses the
+    # interlock and is certified; raise CHALLENGE_STATUS_SECS to thin the in-band control
+    # traffic if the bridge proves sensitive to it (default 15 s — already well spaced).
+    _status_secs = float(_os.environ.get("CHALLENGE_STATUS_SECS", "15"))
     v, last = {"verdict": "FAIL", "U": "NA", "verify": "?", "out_bind": "?",
                "hreq": "", "hrsp": ""}, 0.0
     proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
@@ -175,7 +183,7 @@ def handle_challenge(send, header, body, store, key=KEY):
         if line.startswith("CHALLENGE_RESULT"):
             for kv in line.split()[1:]:
                 k, _, val = kv.partition("="); v[k] = val
-        elif (line[:1] == "[" or "verify]" in line) and time.time() - last > 15:
+        elif (line[:1] == "[" or "verify]" in line) and time.time() - last > _status_secs:
             send(T_STATUS, ("  " + line[:90]).encode("ascii", "replace")); last = time.time()
     proc.wait()
     # RESULT (spec §6.1): one compact, single-frame key=value line. The client already
