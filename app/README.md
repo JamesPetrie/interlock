@@ -84,12 +84,15 @@ replies (`CTL_GAP`) — keep them that way.
 
 ## Operational note — interlock reset between sessions
 
-In a full loopback run on 2026-06-18 the demo passed end to end (forwarding, both certs
-`tau`/`overall` PASS, greedy generate, in-band `/prove` streaming, Rust verify ACCEPT,
-combined panel with request+response `H(local)==H(proof)` MATCH). **After** that complete
-session — request + response + ~30 streamed control packets — the interlock stopped
-issuing certificates for new client packets (both NICs stayed healthy, zero errors). This
-is the documented "control traffic can wedge the bridge; needs a reset" mode.
+Validated 2026-06-18 over the interlock (multi-turn): "capital of France?" → Paris.,
+"And of Germany?" → Berlin. (the request binds the 25-token transcript, so the proof
+covers the conversation context), both certs `tau`/`overall` PASS, in-band `/prove`
+streaming, Rust verify ACCEPT, combined panel with `H(local)==H(proof)` MATCH, U≈0.
+
+An earlier bitstream stopped issuing certificates after one full session (NICs stayed
+healthy) — this traced to a **gateware timing violation**, not the control traffic. It was
+fixed by reflashing the corrected bitstream (`top_timingfix.job`), after which `/prove`
+re-ran cleanly with no wedge. If instability recurs, reflash a known-good job.
 
 To reset, reflash the FPGA (~5 min) — the flash runs in the x86 QEMU VM, so use the
 namespace-crossing helper, then re-run `server_run.sh`. Full procedure:
