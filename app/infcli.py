@@ -361,7 +361,11 @@ def cmd_chat(a):
         if not entry["response_data"]:
             print("  (no response captured for rid=%d)\n" % last_rid); continue
         rsp_ids = unpack_ids(ub(entry["response_data"])[HDR:])
-        answer = t.decode(rsp_ids, skip_special_tokens=True).strip()
+        answer = t.decode(rsp_ids, skip_special_tokens=True)
+        cut = answer.find("\n" + a.user_tag)          # trim a hallucinated next turn
+        if cut != -1:
+            answer = answer[:cut]
+        answer = answer.strip()
         history.append((user, answer))
         rc = "y" if entry["request_cert"] else "-"
         sc = "y" if entry["response_cert"] else "-"

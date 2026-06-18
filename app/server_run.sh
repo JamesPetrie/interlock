@@ -18,6 +18,7 @@ exec docker run --rm --name ilk_server --gpus all --ipc=host --network host \
   -e MODEL_DIR=/models/llama-2-7b-hf \
   -e PRELOAD_MODEL=1 \
   -e MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-64}" \
+  -e STOP="${STOP:-\\nQuestion:}" \
   -e CHALLENGE_TQ="${CHALLENGE_TQ:-80}" \
   -e CHALLENGE_PY="python -u /infproof/analysis/interlock_challenge.py" \
   -v "$INFPROOF":/infproof -v "$MODELS":/models -v "$APP":/app \
