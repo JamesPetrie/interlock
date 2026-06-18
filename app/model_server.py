@@ -113,21 +113,47 @@ def handle_challenge(send, header, body, store, key=KEY):
     req_tokens = req_data[HDR:]
     rsp_tokens = rsp_data[HDR:]
 
-    # ============================ ZKP AGENT: fill (e),(f),(g) ============================
-    # You now have the cert-verified, traffic-bound plaintext:
-    #     req_tokens  (the challenged request payload)
-    #     rsp_tokens  (the paired response payload)
-    # Do:
-    #   1. prove on (req_tokens, rsp_tokens)  -> proof   (minutes; emit T_STATUS as it runs)
-    #   2. verify_proof(proof)                -> ok, U
-    #   3. extract transcript from the proof  (input ids + output fingerprint)  [§6.3]
-    #   4. (e) req_tokens == transcript input ids ; output fingerprint over rsp_tokens
-    #      (g) those public values are the binding back to the certified bytes
-    #   5. RESULT must carry: PASS/FAIL, U, the challenged-packet plaintext, the ZKP
-    #      transcript plaintext, and their match (spec §6.1). Chunk across spaced send()s
-    #      if it exceeds one ~1400-byte frame.
-    send(T_STATUS, b"TODO(zkp): prove + verify + plaintext match")
-    send(T_RESULT, b"INCOMPLETE: ZKP section of handle_challenge not yet wired")
+    # ===================== ZKP AGENT: (e),(f),(g) — wired to infproof =====================
+    # req_tokens / rsp_tokens are the cert-verified, traffic-bound plaintext payloads:
+    # canonical token-id arrays (LE uint32, inference-cli-app.md §6.3). Prove + Rust-verify
+    # ON THE SPARK (verify-on-Spark: the ~100 MB proof never crosses the wire) and bind the
+    # proof's PUBLIC output ids to the response. The compute is delegated to infproof's
+    # interlock_challenge.py (CHALLENGE_PY), so this file carries no torch/CUDA dependency.
+    # The output binding uses the public out_ids (reveal-by-constraint), not a fingerprint.
+    import os as _os, subprocess as _sp
+    def _ids(buf):                                    # canonical payload -> token ids
+        n = len(buf) // 4
+        return list(struct.unpack("<%dI" % n, buf[:4 * n])) if n else []
+    req_ids, rsp_ids = _ids(req_tokens), _ids(rsp_tokens)
+    if not req_ids or not rsp_ids:
+        send(T_RESULT, b"FAIL (d): empty token payload"); return
+    cmd = _os.environ.get(
+        "CHALLENGE_PY",
+        "/home/claude/venv-hf/bin/python -u /home/claude/infproof/analysis/interlock_challenge.py"
+    ).split() + ["--request", ",".join(map(str, req_ids)),
+                 "--response", ",".join(map(str, rsp_ids))]
+    send(T_STATUS, b"proving + verifying on the Spark (minutes; proof stays here)")
+    v, last = {"verdict": "FAIL", "U": "NA", "verify": "?", "out_bind": "?"}, 0.0
+    proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.STDOUT, text=True, bufsize=1)
+    for line in proc.stdout:
+        line = line.rstrip()
+        if line.startswith("CHALLENGE_RESULT"):
+            for kv in line.split()[1:]:
+                k, _, val = kv.partition("="); v[k] = val
+        elif (line[:1] == "[" or "verify]" in line) and time.time() - last > 15:
+            send(T_STATUS, ("  " + line[:90]).encode("ascii", "replace")); last = time.time()
+    proc.wait()
+    ok = (v["verdict"] == "PASS")
+    # RESULT (spec §6.1): PASS/FAIL, U, the plaintext, and the input/output match.
+    out = "\n".join([
+        ("PASS" if ok else "FAIL") + "  U=" + v["U"] + " bits",
+        "prompt     : " + ",".join(map(str, req_ids)),
+        "completion : " + ",".join(map(str, rsp_ids)),
+        "zkp.verify : " + v["verify"],
+        "zkp.output : out_ids bind " + v["out_bind"] + " (public ids == response targets)",
+    ]).encode("ascii", "replace")
+    for i in range(0, len(out), 1400):                # chunk to one frame each, spaced
+        send(T_RESULT, out[i:i + 1400])
     # ====================================================================================
 
 
