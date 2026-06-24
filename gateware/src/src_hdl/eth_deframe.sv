@@ -73,13 +73,13 @@ module eth_deframe (
   widx_t       rx_widx;                              // wire-word index in frame
   logic        in_frame;                             // inside SOF..EOF: words sampled
 
-  eth_hdr_bytes_t             hdr_bytes;    // header shift register, [k] = wire byte k
+  eth_hdr_bits_t              hdr_bits;     // header shift register, [k] = wire byte k
   logic [8*RESIDUE_BYTES-1:0] residue;      // DATA tail bytes of the previous beat
   logic [RESIDUE_BYTES-1:0]   residue_keep; // keep bits for `residue`
   len_t                       beat_idx;     // data beat index to be emitted next
 
   // Parsed header view of the shift register (valid once word 3 has shifted in).
-  wire eth_header_t eth_hdr   = eth_hdr_from_bytes(hdr_bytes);
+  wire eth_header_t eth_hdr   = eth_hdr_from_wire_bits(hdr_bits);
   wire len_t        eth_len   = eth_hdr.len_type;
   wire              len_valid = (eth_len <= len_t'(ETH_LEN_MAX));
 
@@ -131,7 +131,7 @@ module eth_deframe (
     if (!rst_n) begin
       rx_widx       <= '0;
       in_frame      <= 1'b0;
-      hdr_bytes     <= '0;
+      hdr_bits      <= '0;
       residue       <= '0;
       residue_keep  <= '0;
       beat_idx    <= '0;
@@ -150,12 +150,16 @@ module eth_deframe (
         in_frame <= !in_eof;
         rx_widx  <= rx_widx + 1'b1;
 
-        // ---- header capture: shift words in; after the partial last header
-        // word, hdr_bytes[k] = wire byte k ----
+        // Note: Ethernet itself is Big-Endian but the MAC interface constructs words
+        //       in Little-Endian fashion (e.g. L_T MSB is in dat[7:0] instead of [31:24]).
+        //       To avoid inline converting, shift the words using LE fashion
+        //       swap byte order separately.
+
+        // ---- header capture: shift words in ----
         if (int'(rx_widx) <= HDR_FULL_WORDS-1) begin
-          hdr_bytes <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:4]};
+          hdr_bits <= {in_dat, hdr_bits[ETH_HDR_BITS-1:32]};
         end else if (int'(rx_widx) == HDR_FULL_WORDS) begin
-          {residue, hdr_bytes}  <= {in_dat, hdr_bytes[ETH_HDR_BYTES-1:RESIDUE_BYTES]};
+          {residue, hdr_bits}  <= {in_dat, hdr_bits[ETH_HDR_BITS-1:8*RESIDUE_BYTES]};
           residue_keep          <= '1;  // first DATA bytes (full word: valid)
           beat_idx              <= '0;  // reset beat index to 0
         end

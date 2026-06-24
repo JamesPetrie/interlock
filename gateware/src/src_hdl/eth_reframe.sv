@@ -131,7 +131,7 @@ module eth_reframe #(
   // header octets, [k] = wire byte k: forced DST | SRC | regenerated LENGTH.
   // Bit-cast of a plain concat (fields in struct order) because Icarus does
   // not support assignment patterns (eth_header_t'{dst: ..., ...}).
-  wire eth_hdr_bytes_t hdr_bytes = eth_hdr_to_bytes(eth_header_t'({FORCE_DST, FORCE_SRC, tuser}));
+  wire eth_hdr_bits_t hdr_bits = eth_hdr_to_wire_bits(eth_header_t'({FORCE_DST, FORCE_SRC, tuser}));
 
   // fold appended DATA/PAD bytes into the CRC (header folds at preload)
   function automatic logic [31:0] crc_fold(input logic [31:0] c, input logic [31:0] w,
@@ -163,11 +163,16 @@ module eth_reframe #(
         o_bv  <= 2'b00;
       end
 
+       // Note: Ethernet itself is Big-Endian but the MAC interface consumes words
+      //       in Little-Endian fashion (e.g. L_T MSB is in dat[7:0] instead of [31:24]).
+      //       To avoid inline converting, first swap byte order separately and
+      //       shift the words using LE fashion.
+
       case (state)
         F_IDLE: begin
           // SOP: preload the header (folding it into the CRC) + latch geometry
           if (tvalid) begin
-            buffer   <= hdr_bytes;
+            buffer   <= hdr_bits;
             fed      <= len_t'(ETH_HDR_BYTES);
             sent     <= '0;
             crc_rem  <= CRC32_INIT;
