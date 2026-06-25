@@ -27,7 +27,9 @@
 // because MRX* are CoreTSE outputs; an MTX bundle is an output here because
 // MTX* are CoreTSE inputs.
 
-module fabric_bridge (
+module fabric_bridge
+  import canon_pkg::*;          // CANON_DIR_*, CANON_*_HDR_BYTES (used on the canon_proc instances)
+(
   input  wire        clk,      // fabric clock (CORETSE M*CLK domain; both MACs share it)
   input  wire        rst_n,    // active-low synchronous reset
   // ---- Port 0 / CORETSE_0 ----
@@ -83,12 +85,12 @@ module fabric_bridge (
   localparam logic [47:0] MAC_SERVER = 48'h02_00_00_00_00_02;
 
   // ====================================================================
-  // Requests: CORETSE_0 MAC-RX -> deframe/reframe -> CORETSE_1 MAC-TX
+  // Requests: CORETSE_0 MAC-RX -> core -> CORETSE_1 MAC-TX
   // ====================================================================
   wire        req_tvalid_i, req_tready_i, req_tlast_i;
   wire [31:0] req_tdata_i;
   wire [3:0]  req_tkeep_i;
-  wire [15:0] req_len_i;
+  wire        req_tuser_i;
 
   eth_deframe deframe_req (
     .clk           (clk),
@@ -104,11 +106,41 @@ module fabric_bridge (
     .tdata         (req_tdata_i),
     .tkeep         (req_tkeep_i),
     .tlast         (req_tlast_i),
-    .tuser         (),
+    .tuser         (req_tuser_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (req_len_i)
+    .dbg_eth_len   ()
+  );
+
+  // ====================================================================
+  // Requests: canon_proc -> traffic_commit
+  // ====================================================================
+  wire         req_tvalid_cp2tc, req_tready_cp2tc, req_tlast_cp2tc;
+  wire [31:0]  req_tdata_cp2tc;
+  wire [3:0]   req_tkeep_cp2tc;
+  wire [15:0]  req_tuser_cp2tc;
+  wire [127:0] cert_nonce; // TODO add width localparam
+
+  canon_proc #(
+    .DIR (CANON_DIR_REQ)
+  ) canon_proc_req (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (req_tvalid_i),
+    .tready_s (req_tready_i),
+    .tdata_s  (req_tdata_i),
+    .tkeep_s  (req_tkeep_i),
+    .tlast_s  (req_tlast_i),
+    .tuser_s  (req_tuser_i),
+    .tvalid_m (req_tvalid_cp2tc),
+    .tready_m (req_tready_cp2tc),
+    .tdata_m  (req_tdata_cp2tc),
+    .tkeep_m  (req_tkeep_cp2tc),
+    .tlast_m  (req_tlast_cp2tc),
+    .tuser_m  (req_tuser_cp2tc),
+    .nonce    (cert_nonce),
+    .timer    ('1) // TODO
   );
 
   wire         req_tvalid_o, req_tready_o, req_tlast_o;
@@ -119,16 +151,16 @@ module fabric_bridge (
   wire [255:0] req_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (16)
+    .HDR_BYTES (CANON_REQ_HDR_BYTES)
   ) hash_req (
     .clk      (clk),
     .rst_n    (rst_n),
-    .tvalid_s (req_tvalid_i),
-    .tready_s (req_tready_i),
-    .tdata_s  (req_tdata_i),
-    .tkeep_s  (req_tkeep_i),
-    .tlast_s  (req_tlast_i),
-    .tuser_s  (req_len_i),
+    .tvalid_s (req_tvalid_cp2tc),
+    .tready_s (req_tready_cp2tc),
+    .tdata_s  (req_tdata_cp2tc),
+    .tkeep_s  (req_tkeep_cp2tc),
+    .tlast_s  (req_tlast_cp2tc),
+    .tuser_s  (req_tuser_cp2tc),
     .tvalid_m (req_tvalid_o),
     .tready_m (req_tready_o),
     .tdata_m  (req_tdata_o),
@@ -160,12 +192,12 @@ module fabric_bridge (
   );
 
   // ====================================================================
-  // Responses: CORETSE_1 MAC-RX -> deframe/reframe -> CORETSE_0 MAC-TX
+  // Responses: CORETSE_1 MAC-RX -> core -> CORETSE_0 MAC-TX
   // ====================================================================
   wire        rsp_tvalid_i, rsp_tready_i, rsp_tlast_i;
   wire [31:0] rsp_tdata_i;
   wire [3:0]  rsp_tkeep_i;
-  wire [15:0] rsp_len_i;
+  wire        rsp_tuser_i;
 
   eth_deframe deframe_rsp (
     .clk           (clk),
@@ -181,11 +213,39 @@ module fabric_bridge (
     .tdata         (rsp_tdata_i),
     .tkeep         (rsp_tkeep_i),
     .tlast         (rsp_tlast_i),
-    .tuser         (),
+    .tuser         (rsp_tuser_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   (rsp_len_i)
+    .dbg_eth_len   ()
+  );
+
+  // ====================================================================
+  // Responses: canon_proc -> traffic_commit
+  // ====================================================================
+  wire        rsp_tvalid_cp2tc, rsp_tready_cp2tc, rsp_tlast_cp2tc;
+  wire [31:0] rsp_tdata_cp2tc;
+  wire [3:0]  rsp_tkeep_cp2tc;
+  wire [15:0] rsp_tuser_cp2tc;
+
+  canon_proc #(
+    .DIR (CANON_DIR_RSP)
+  ) canon_proc_rsp (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (rsp_tvalid_i),
+    .tready_s (rsp_tready_i),
+    .tdata_s  (rsp_tdata_i),
+    .tkeep_s  (rsp_tkeep_i),
+    .tlast_s  (rsp_tlast_i),
+    .tuser_s  (rsp_tuser_i),
+    .tvalid_m (rsp_tvalid_cp2tc),
+    .tready_m (rsp_tready_cp2tc),
+    .tdata_m  (rsp_tdata_cp2tc),
+    .tkeep_m  (rsp_tkeep_cp2tc),
+    .tlast_m  (rsp_tlast_cp2tc),
+    .tuser_m  (rsp_tuser_cp2tc),
+    .timer    ('1) // TODO
   );
 
   wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
@@ -196,16 +256,16 @@ module fabric_bridge (
   wire [255:0] rsp_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (16)
+    .HDR_BYTES (CANON_RSP_HDR_BYTES)
   ) hash_rsp (
     .clk      (clk),
     .rst_n    (rst_n),
-    .tvalid_s (rsp_tvalid_i),
-    .tready_s (rsp_tready_i),
-    .tdata_s  (rsp_tdata_i),
-    .tkeep_s  (rsp_tkeep_i),
-    .tlast_s  (rsp_tlast_i),
-    .tuser_s  (rsp_len_i),
+    .tvalid_s (rsp_tvalid_cp2tc),
+    .tready_s (rsp_tready_cp2tc),
+    .tdata_s  (rsp_tdata_cp2tc),
+    .tkeep_s  (rsp_tkeep_cp2tc),
+    .tlast_s  (rsp_tlast_cp2tc),
+    .tuser_s  (rsp_tuser_cp2tc),
     .tvalid_m (rsp_tvalid_o),
     .tready_m (rsp_tready_o),
     .tdata_m  (rsp_tdata_o),
@@ -226,7 +286,7 @@ module fabric_bridge (
     .clk (clk), .rst_n (rst_n), .key (2),
     .in_valid_req (req_ovr_valid), .in_overall_req (req_ovr_digest), // pulse sink: cert period (~s) >> HMAC
     .in_valid_rsp (1'b0), .in_overall_rsp ('0),
-    .in_nonce ('1),
+    .in_nonce (cert_nonce),
     .c_valid (reqc_tvalid), .c_ready (reqc_tready), .c_data (reqc_tdata),
     .c_keep (reqc_tkeep), .c_last (reqc_tlast), .c_user (reqc_tuser)
   );

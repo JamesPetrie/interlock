@@ -51,62 +51,58 @@ A log is a time-ordered sequence of packets; there is one log per direction. Tim
 **Input (request) packet:**
 
 ```
-      |127     96|95      64|63      32|31       0| LSB
-      +----------+----------+----------+----------+ - -
-      ~                                           ~
-      |             PAYLOAD (variable)            | 512
-      +-------------------------------------------+
-      |                                           | 384
-      +-                KEY_COMMIT               -+
-      |                                           | 256
-      +---------------------+---------------------+
-      |       RESERVED      |         REF         | 128
-      +---------------------+----------+----------+
-      |          ID         |  BUCKET  | PLD_LEN  |   0
-      +---------------------+----------+----------+
+      |127     96|95      64|63      32|31       0|
+      +----------+----------+---------------------+  512
+      | PLD_LEN  |  BUCKET  |          ID         |
+      +----------+----------+---------------------+  384
+      |      REFERENCE      |       RESERVED      |
+      +---------------------+---------------------+  256
+      |                                           |
+      +-                KEY_COMMIT               -+  128
+      |                                           |
+      +-------------------------------------------+    0
 ```
 
 **Output (response) packet:**
 
 
 ```
-      |127     96|95      64|63      32|31       0| LSB
-      +----------+----------+----------+----------+ - -
-      ~                                           ~
-      |             PAYLOAD (variable)            | 128
-      +---------------------+----------+----------+
-      |         ID          |  BUCKET  | PLD_LEN  |   0
-      +---------------------+----------+----------+
+      |127     96|95      64|63      32|31       0|
+      +----------+----------+---------------------+  128
+      | PLD_LEN  |  BUCKET  |          ID         |
+      +----------+----------+---------------------+    0
 ```
 
 ### Common HEADER fields
 
-**PLD_LEN, bits [31:0]** \
+These three fields sit at the top of both frames, so they land at different absolute offsets in the 512-bit request and the 128-bit response.
+
+**PLD_LEN, bits [511:480] (request) / [127:96] (response)** \
 Length of the ciphertext payload.
 
 <!-- REVISIT OK to use 32 bit BUCKET? it fits nicely in both REQ and RSP -->
-**BUCKET, bits [63:32]** \
+**BUCKET, bits [479:448] (request) / [95:64] (response)** \
 Index of the time bucket the packet is targeting.
 
 <!-- REVISIT do we need the inference flag? -->
-**ID, bits [127:64]** \
+**ID, bits [447:384] (request) / [63:0] (response)** \
 Identifier of the transaction. \
 **ID[0]** is the Inference flag, must be set for inference requests. \
 ID=0 is RESERVED for control messages.
 
 ### Request Only HEADER fields
 
-**REF, bits [191:128]** \
+**REFERENCE, bits [383:320]** \
 Identifier of the transaction referenced in the current request. \
 Set to 0 (RESERVED) if no previous transaction is referenced. \
-The REF feature provides support for multi-turn conversations and multi-packet messages. See [References and multi-part exchanges](#references-and-multi-part-exchanges). \
-REF must be strictly less than ID.
+The REFERENCE feature provides support for multi-turn conversations and multi-packet messages. See [References and multi-part exchanges](#references-and-multi-part-exchanges). \
+REFERENCE must be strictly less than ID.
 (A response inherits its context through its request, so it carries no reference.)
 
-**RESERVED, bits [255:192]** \
+**RESERVED, bits [319:256]** \
 Bits RESERVED for future use.
 
-**KEY_COMMIT, bits [511:256]** \
+**KEY_COMMIT, bits [255:0]** \
 Cryptographic commitment to the key material used for this request and its response.
 
 
@@ -127,57 +123,57 @@ The cleartext header carries only what a trusted party must act on without decry
 Every second the interlock emits a certificate committing to the last 1000 buckets of both logs, computed incrementally as packets stream through:
 
 ```
-      |127     96|95      64|63      32|31       0| LSB
-      +----------+----------+----------+----------+ - -
-      |                                           | 896
-      +-                AUTH_TAG                 -+
-      |                                           | 768
-      +-------------------------------------------+
-      |                                           | 640
-      +-                 OUTWARD                 -+
-      |                                           | 512
-      +-------------------------------------------+
-      |                                           | 384
-      +-                 INWARD                  -+
-      |                                           | 256
-      +---------------------+---------------------+
-      |                   NONCE                   | 128
-      +---------------------+----------+----------+
-      | BKT_NUM  | BKT_START|  DEVICE  | VERSION  |   0
-      +---------------------+----------+----------+
+      |127     96|95      64|63      32|31       0|
+      +----------+----------+---------------------+ 1024
+      | VERSION  |  DEVICE  | BKT_START| BKT_NUM  |
+      +----------+----------+---------------------+  896
+      |                   NONCE                   |
+      +---------------------+---------------------+  768
+      |                                           |
+      +-                 INWARD                  -+  640
+      |                                           |
+      +-------------------------------------------+  512
+      |                                           |
+      +-                 OUTWARD                 -+  384
+      |                                           |
+      +-------------------------------------------+  256
+      |                                           |
+      +-                AUTH_TAG                 -+  128
+      |                                           |
+      +-------------------------------------------+    0
 ```
 
 ### Certificate message body (m)
 
-**VERSION, bits [31:0]** \
+**VERSION, bits [1023:992]** \
 Bind the certificate to the protocol version.
 
-**DEVICE, bits [63:32]** \
+**DEVICE, bits [991:960]** \
 Bind the certificate to the logging device.
 
-**BKT_START, bits [95:64]** \
+**BKT_START, bits [959:928]** \
 Index of the first time bucket in the certified interval. \
 Must be equal to the previous certificate's BKT_START + BKT_NUM.
 
-**BKT_NUM, bits [127:96]** \
+**BKT_NUM, bits [927:896]** \
 Number of buckets observed in the certified interval. \
 Fixed 1000 in the current version.
 
-**NONCE, bits [255:128]** \
+**NONCE, bits [895:768]** \
 Verifier supplied nonce for recency check.
 See [Nonce latch](#nonce-latch)
 
-**INWARD, bits [511:256]** \
+**INWARD, bits [767:512]** \
 Cryptographic commitment to the input (request) traffic observed during the certificate interval. \
 See [Traffic commitment generation](#traffic-commitment-generation).
 
-**OUTWARD, bits [767:512]** \
+**OUTWARD, bits [511:256]** \
 Cryptographic commitment to the output (response) traffic observed during the certificate interval. \
 See [Traffic commitment generation](#traffic-commitment-generation).
 
 ### Certificate authentication tag (τ)
 
-**AUTH_TAG, bits [1023:768]** \
+**AUTH_TAG, bits [255:0]** \
 Cryptographic authentication tag (τ) of the certificate message body (m). \
 Produced using the pre-shared key `k`.
 
@@ -204,11 +200,11 @@ The verifier occasionally sends a plaintext nonce inbound; the interlock latches
 
 ## References and multi-part exchanges
 
-A single request→response pair handles a one-shot prompt that fits in one packet. Everything larger — a multi-turn conversation, a prompt too big for one packet, a response too big for one packet — is built from the same primitive: a request carries a `REF` pointing at an earlier request whose context it extends. The chain of references is the assembled context.
+A single request→response pair handles a one-shot prompt that fits in one packet. Everything larger — a multi-turn conversation, a prompt too big for one packet, a response too big for one packet — is built from the same primitive: a request carries a `REFERENCE` pointing at an earlier request whose context it extends. The chain of references is the assembled context.
 
-This costs the interlock nothing. A `REF` is just bytes in the header that it hashes like any other field; all the chaining logic lives in the (untrusted) frontend and compute and is *verified* after the fact by the verifier walking references through cert-bound records.
+This costs the interlock nothing. A `REFERENCE` is just bytes in the header that it hashes like any other field; all the chaining logic lives in the (untrusted) frontend and compute and is *verified* after the fact by the verifier walking references through cert-bound records.
 
-**Context assembly.** To recompute the response to request `q`: walk back from `q` along `REF`, and for each request in the chain include its payload *and its response, if one is cert-bound*. The root (null reference) bottoms out the recursion; its payload is genuine external input. The rule is uniform — *context = the cert-bound chain* — and it covers every case below.
+**Context assembly.** To recompute the response to request `q`: walk back from `q` along `REFERENCE`, and for each request in the chain include its payload *and its response, if one is cert-bound*. The root (null reference) bottoms out the recursion; its payload is genuine external input. The rule is uniform — *context = the cert-bound chain* — and it covers every case below.
 
 **The three applications, one mechanism:**
 
@@ -220,7 +216,7 @@ This costs the interlock nothing. A `REF` is just bytes in the header that it ha
 
 **Integrity rules** (checked at challenge time, when the chain is opened):
 
-- *Causality / acyclicity.* `REF` must be an earlier request: the cheap check is `REF < ID` (monotonic ids), confirmed by `referenced bucket ≤ referencing bucket` when the link is opened. This rules out cycles and forward references.
+- *Causality / acyclicity.* `REFERENCE` must be an earlier request: the cheap check is `REFERENCE < ID` (monotonic ids), confirmed by `referenced bucket ≤ referencing bucket` when the link is opened. This rules out cycles and forward references.
 - *Cardinality.* One response per request (single-use, as before), but a request may be referenced by *many* later requests — these are different rules. Branching conversations and reuse are fine; a second response to an already-answered request is a violation.
 - *No fabricated links.* Every request in the chain must itself open against a certificate, so a prover cannot splice in a fabricated prior to launder covert output — the generalization of the single-pair fabricated-input defense.
 

@@ -95,7 +95,7 @@ module payload_hash #(
   logic [PW_W-1:0]            cnt;          // word index within the packet
   logic                      wptr, rptr;    // 1-bit slot indices (depth 2)
   logic [1:0]                occ;           // occupancy 0..2
-  logic [HDR_WORDS-1:0][31:0] f_hdr  [0:FD-1];
+  logic [HDR_WORDS-1:0][31:0] f_hdr  [0:FD-1]; // REVISIT is 2D array OK in FPGA?
   logic [15:0]                f_len  [0:FD-1];
   logic                       f_swap [0:FD-1];
   wire fifo_full = (occ == 2'd2);
