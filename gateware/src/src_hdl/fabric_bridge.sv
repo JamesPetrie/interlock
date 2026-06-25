@@ -105,11 +105,10 @@ module fabric_bridge (
     .tkeep         (req_tkeep_i),
     .tlast         (req_tlast_i),
     .tuser         (),
-    .tlen          (req_len_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   ()
+    .dbg_eth_len   (req_len_i)
   );
 
   wire         req_tvalid_o, req_tready_o, req_tlast_o;
@@ -183,11 +182,10 @@ module fabric_bridge (
     .tkeep         (rsp_tkeep_i),
     .tlast         (rsp_tlast_i),
     .tuser         (),
-    .tlen          (rsp_len_i),
     .dbg_hdr_valid (),
     .dbg_eth_dst   (),
     .dbg_eth_src   (),
-    .dbg_eth_len   ()
+    .dbg_eth_len   (rsp_len_i)
   );
 
   wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
