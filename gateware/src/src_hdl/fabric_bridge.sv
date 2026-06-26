@@ -119,7 +119,7 @@ module fabric_bridge (
   wire         req_ovr_valid;
   wire [255:0] req_ovr_digest;
 
-  traffic_hash #(
+  traffic_commit #(
     .HDR_BYTES (16)
   ) hash_req (
     .clk      (clk),
@@ -197,7 +197,7 @@ module fabric_bridge (
   wire         rsp_ovr_valid;
   wire [255:0] rsp_ovr_digest;
 
-  traffic_hash #(
+  traffic_commit #(
     .HDR_BYTES (16)
   ) hash_rsp (
     .clk      (clk),

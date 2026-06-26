@@ -30,7 +30,7 @@
 // consecutive certs tile the timeline (bucket_start_N = bucket_start_{N-1} +
 // num_buckets). nonce is driven in from canon_proc (inbound id=0 control packet).
 
-module traffic_hash #(
+module traffic_commit #(
   parameter int unsigned HDR_BYTES       = 16
 ) (
   input  wire        clk,
