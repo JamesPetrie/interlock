@@ -8,18 +8,22 @@
 //   H(packet) = SHA256( header || H(payload) )
 //   record    = length || H(packet)
 //
-// presented in parallel (rec_len, rec_digest) as a one-cycle pulse, with rec_last
-// marking the last record of a batch (the swap-flagged tlast).
+// presented in parallel (rec_len, rec_digest) as a one-cycle pulse. The empty
+// bucket-boundary delimiter (pv_flush from payload_hash) builds no record; it is
+// emitted as a zero-byte (rec_bytes=0) closing element with rec_last=1 that the
+// serializer turns into sha256_msg's empty in_last beat, closing the bucket.
 //
 // header || H(payload) is at most HDR_BYTES + 32 <= 44 bytes, so H(packet) is a
 // *single* SHA-256 block. record_layer assembles that padded block in one cycle
 // and hands it straight to a raw sha256_core — no streaming, no per-word feed.
 // That makes the stage strictly faster than payload_hash (one block + a 1-cycle
 // load, versus a payload absorb + one block), so it is always ready when a
-// payload result appears: payload_hash needs no result handshake. Symmetrically,
-// the bucket serializer consumes a record (~9 words) far faster than a packet
-// arrives (~one block), so the record output is an un-handshaked pulse — there is
-// no rec_ready.
+// payload result appears: payload_hash needs no result handshake. The empty
+// boundary delimiter rides the core too (a no-op 1-beat "packet", same shape as a
+// header-only frame whose payload is already SHA256("")), so every output —
+// records and closes alike — is a one-cycle pulse spaced one core op apart. The
+// bucket serializer drains an element (~9 words) far faster than that, so the
+// close lands a full op behind its record and the output needs no rec_ready.
 
 module record_layer
   import sha256_pkg::*;
@@ -45,15 +49,18 @@ module record_layer
   output wire        m_last,
   output wire [15:0] m_user,
 
-  // record master (parallel pulse): length || H(packet); rec_last = batch boundary
+  // record master: a one-cycle element pulse. A packet is length || H(packet) with
+  // rec_bytes=34; the empty bucket-boundary delimiter is a zero-byte element
+  // (rec_bytes=0) with rec_last=1 that closes the bucket. Un-handshaked (spacing).
   output wire         rec_valid,
   output wire [15:0]  rec_len,
+  output wire [5:0]   rec_bytes,
   output wire [255:0] rec_digest,
   output wire         rec_last
 );
 
   // ---- payload hash + pass-through (no result handshake; always ready) ----
-  wire                   pv_valid, pv_swap;
+  wire                   pv_valid, pv_flush;
   wire [255:0]           pv_digest;
   wire [HDR_BYTES*8-1:0] pv_hdr;          // full header, lane order (byte 0 in [7:0])
   wire [15:0]            pv_len;
@@ -67,7 +74,7 @@ module record_layer
     .m_valid (m_valid), .m_ready (m_ready), .m_data (m_data), .m_keep (m_keep),
     .m_last (m_last), .m_user (m_user),
     .pv_valid (pv_valid), .pv_digest (pv_digest),
-    .pv_hdr (pv_hdr), .pv_len (pv_len), .pv_swap (pv_swap)
+    .pv_hdr (pv_hdr), .pv_len (pv_len), .pv_flush (pv_flush)
   );
 
   // ---- assemble the single padded block, byte 0 in the MSBs ----
@@ -89,11 +96,11 @@ module record_layer
   // The block is combinational from the pv result, so it is submitted to the raw
   // core the very cycle pv pulses (start = pv_valid). record_layer is <=
   // payload_hash in latency — one direct block versus a payload absorb plus >=
-  // one block — so the core has always finished the previous packet by the time
-  // the next pv arrives: no pending register, no handshake. Only the in-flight
-  // length/swap are latched, to ride alongside the digest to the output pulse.
+  // one block — so the core has always finished the previous pv by the time the
+  // next arrives: no pending register, no handshake. Only the in-flight length and
+  // flush tag are latched, to ride alongside the digest to the output pulse.
   logic [15:0]  infl_len;
-  logic         infl_swap;
+  logic         infl_flush;
   wire          core_done;
   wire [255:0]  core_digest;
 
@@ -103,17 +110,19 @@ module record_layer
     .done (core_done), .digest (core_digest)
   );
 
-  // one-cycle record pulse as the block finishes
+  // one-cycle element pulse as the block finishes: a 34-byte record, or the
+  // zero-byte (rec_bytes=0, rec_last=1) close for the boundary delimiter.
   assign rec_valid  = core_done;
   assign rec_len    = infl_len;
+  assign rec_bytes  = infl_flush ? 6'd0 : 6'd34;
   assign rec_digest = core_digest;
-  assign rec_last   = infl_swap;
+  assign rec_last   = infl_flush;                // only the delimiter closes a bucket
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      infl_len <= '0; infl_swap <= 1'b0;
+      infl_len <= '0; infl_flush <= 1'b0;
     end else if (pv_valid) begin
-      infl_len <= pv_len; infl_swap <= pv_swap;
+      infl_len <= pv_len; infl_flush <= pv_flush;
     end
   end
 
