@@ -16,7 +16,7 @@ __pycache__/
 *.pyc
 
 # cocotb / Verilator simulation artifacts
-tb/**/sim_build/
+tb/**/sim_build*/
 tb/**/results.xml
 tb/**/*.vcd
 tb/**/dump.vcd
