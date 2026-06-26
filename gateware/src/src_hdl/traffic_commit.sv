@@ -36,7 +36,9 @@ module traffic_commit #(
   input  wire        clk,
   input  wire        rst_n,
 
-  // AXI-Stream slave (from batch_buffer): len @ beat #0, swap flag (bit 0) @ tlast
+  // AXI-Stream slave (from batch_buffer): len @ beat #0. A bucket boundary is a
+  // standalone empty beat (tkeep=0, tlast) between packets — it closes the overall
+  // hash and builds no record (it still passes through verbatim downstream).
   input  wire        tvalid_s,
   output wire        tready_s,
   input  wire [31:0] tdata_s,
@@ -57,7 +59,8 @@ module traffic_commit #(
 );
 
   // ---- record layer (forks the data path through payload_hash) ----
-  wire         rec_valid, rec_last;        // record output is a pulse (rate-matched)
+  wire         rec_valid, rec_last;        // element output is a pulse (rate-matched)
+  wire [5:0]   rec_bytes;                  // 34 for a record, 0 for the bucket-close element
   wire [15:0]  rec_len;
   wire [255:0] rec_digest;
 
@@ -69,11 +72,11 @@ module traffic_commit #(
     .s_last (tlast_s), .s_user (tuser_s),
     .m_valid (tvalid_m), .m_ready (tready_m), .m_data (tdata_m), .m_keep (tkeep_m),
     .m_last (tlast_m), .m_user (tuser_m),
-    .rec_valid (rec_valid), .rec_len (rec_len),
+    .rec_valid (rec_valid), .rec_len (rec_len), .rec_bytes (rec_bytes),
     .rec_digest (rec_digest), .rec_last (rec_last)
   );
 
-  // ---- serialize records -> overall hash (always ready: drains a record long
+  // ---- serialize records -> overall hash (always ready: drains an element long
   //      before the next arrives, so record_layer needs no rec_ready) ----
   wire        so_ov, so_or, so_olast;
   wire [31:0] so_od;
@@ -82,26 +85,10 @@ module traffic_commit #(
   serializer #(.MAX_BYTES(34)) u_ser_o (
     .clk (clk), .rst_n (rst_n),
     .in_valid (rec_valid), .in_ready (/* rate-matched, always ready */),
-    .in_data ({rec_len, rec_digest}), .in_bytes (6'd34), .in_last (rec_last),
+    .in_data ({rec_len, rec_digest}), .in_bytes (rec_bytes), .in_last (rec_last),
     .out_valid (so_ov), .out_data (so_od), .out_ready (so_or),
     .out_bytes (so_ob), .out_last (so_olast)
   );
-
-  logic [31:0] record_cnt;
-  wire record_last = (record_cnt == 1-1);
-
-  // count last-word *transfers*, not the unqualified so_olast.
-  wire so_last_beat = so_ov && so_or && so_olast;
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      record_cnt <= '0;
-    end else begin
-      if (so_last_beat) begin
-        record_cnt <= !record_last ? (record_cnt + 1) : '0;
-      end
-    end
-  end
 
   // overall hash: absorbs continuously; cert_build captures its digest straight
   // off the ovr_ov pulse — cert_build is idle for a whole certificate period
@@ -112,7 +99,7 @@ module traffic_commit #(
   sha256_msg u_overall (
     .clk (clk), .rst_n (rst_n),
     .in_valid (so_ov), .in_ready (so_or), .in_data (so_od),
-    .in_bytes (so_ob), .in_last (so_olast && record_last),
+    .in_bytes (so_ob), .in_last (so_olast),
     .done (ovr_ov), .digest (ovr_od)
   );
 

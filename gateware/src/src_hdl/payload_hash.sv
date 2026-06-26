@@ -13,8 +13,9 @@
 // masked off the hash branch), the rest is the payload. On packet end the block
 // presents H(payload) with the captured header, the length (bytes actually
 // processed -- the true emitted length, accumulated as a counter, not parsed and
-// not the claimed tuser value), and the swap flag. A packet of exactly HDR_BYTES
-// has an empty payload run -> SHA256("").
+// not the claimed tuser value), and a flush tag (set only for the empty
+// bucket-boundary delimiter, never for a real packet). A packet of exactly
+// HDR_BYTES has an empty payload run -> SHA256("").
 
 module payload_hash #(
   parameter int unsigned HDR_BYTES = 16
@@ -44,7 +45,7 @@ module payload_hash #(
   output wire [255:0]           pv_digest,    // H(payload)
   output wire [HDR_BYTES*8-1:0] pv_hdr,       // full HDR_BYTES header, byte 0 in [7:0]
   output wire [15:0]            pv_len,       // bytes processed (true length)
-  output wire                   pv_swap       // closes a batch
+  output wire                   pv_flush      // 1 = empty bucket-boundary delimiter (no record)
 );
 
   localparam int unsigned HDR_WORDS = HDR_BYTES / 4;
@@ -85,7 +86,7 @@ module payload_hash #(
   // packet boundaries (the core pipelines absorb against compress). So while
   // packet N is still finalising, packet N+1's header is already being absorbed —
   // a single metadata register would be clobbered. Instead a small metadata FIFO
-  // holds {header, length, swap} per packet, read back in order as each digest
+  // holds {header, length, flush} per packet, read back in order as each digest
   // pulses (h_done). The FIFO slot doubles as the accumulator: header words land
   // straight into slot wptr as they stream, and the slot is committed (wptr++) at
   // the last beat. At most two packets are in flight (one compressing, one
@@ -97,11 +98,19 @@ module payload_hash #(
   logic [1:0]                occ;           // occupancy 0..2
   logic [HDR_WORDS-1:0][31:0] f_hdr  [0:FD-1]; // REVISIT is 2D array OK in FPGA?
   logic [15:0]                f_len  [0:FD-1];
-  logic                       f_swap [0:FD-1];
+  logic                       f_flush [0:FD-1];
   wire fifo_full = (occ == 2'd2);
 
   wire [2:0] keep_cnt = 3'($countones(b_keep));
   wire is_hdr = (cnt < PW_W'(HDR_WORDS));
+
+  // bucket-boundary delimiter: a standalone empty beat (tkeep==0, tlast) at a
+  // packet boundary (cnt==0). It is not a packet -- it builds no record; it is
+  // tagged in the metadata FIFO and surfaced as pv_flush so record_layer closes
+  // the bucket after the preceding record. It still feeds u_payload a 0-byte
+  // in_last beat (via the existing header-only path), so its FIFO slot pops in
+  // order off h_done, keeping the flush behind the records it must follow.
+  wire is_delim = b_valid && b_last && (b_keep == 4'b0) && (cnt == '0);
 
   assign b_ready = h_ready && !fifo_full;     // also stall if metadata can't be queued
   wire fire_b = b_valid && b_ready;
@@ -121,7 +130,7 @@ module payload_hash #(
   assign pv_digest = h_digest;
   assign pv_hdr    = f_hdr[rptr];          // packed words -> flat header vector
   assign pv_len    = f_len[rptr];
-  assign pv_swap   = f_swap[rptr];
+  assign pv_flush  = f_flush[rptr];
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -129,15 +138,13 @@ module payload_hash #(
     end else begin
       if (fire_b) begin
         // accumulate straight into the open slot; header words by index, length
-        // running, swap and the wptr++ commit on the last beat
+        // running, the flush tag and the wptr++ commit on the last beat
         if (is_hdr)
           f_hdr[wptr][cnt[HW_IDX_W-1:0]] <= b_data;
         f_len[wptr] <= (cnt == '0) ? 16'(keep_cnt) : (f_len[wptr] + 16'(keep_cnt));
         cnt <= b_last ? '0 : (cnt + PW_W'(1));
         if (b_last) begin
-          //TODO
-          //f_swap[wptr] <= b_user[0];
-          f_swap[wptr] <= 1'b1;
+          f_flush[wptr] <= is_delim;   // set only for the empty boundary delimiter
           wptr <= ~wptr;
         end
       end
