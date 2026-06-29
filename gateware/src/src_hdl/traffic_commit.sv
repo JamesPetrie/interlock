@@ -31,7 +31,7 @@
 // num_buckets). nonce is driven in from canon_proc (inbound id=0 control packet).
 
 module traffic_commit #(
-  parameter int unsigned HDR_BYTES       = 16
+  parameter int unsigned HDR_BYTES       = 64
 ) (
   input  wire        clk,
   input  wire        rst_n,

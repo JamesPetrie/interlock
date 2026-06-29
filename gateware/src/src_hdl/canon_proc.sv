@@ -129,7 +129,7 @@ module canon_proc
       assign hdr_ref      = '0;
       assign hdr_pld_len  = parsed.pld_len;
       assign hdr_kcommit  = '0;
-      assign hdr_rsvd_clr = 1'b1;
+      assign hdr_rsvd_clr = (parsed.reserved0 == '0);
     end
   endgenerate
 
