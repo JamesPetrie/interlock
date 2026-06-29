@@ -19,9 +19,10 @@ package canon_pkg;
   localparam int unsigned CANON_PLD_LEN_W   =   32;
   localparam int unsigned CANON_BKT_W       =   32;
   localparam int unsigned CANON_ID_W        =   64;
-  localparam int unsigned CANON_RSVD_W      =   64;
+  localparam int unsigned CANON_REQ_RSVD_W  =   64;
   localparam int unsigned CANON_KCOMMIT_W   =  256;
   localparam int unsigned CANON_NONCE_W     =  128;
+  localparam int unsigned CANON_RSP_RSVD_W  =  384;
 
 
   localparam int unsigned CANON_TOK_BYTES   =    4;
@@ -48,8 +49,8 @@ package canon_pkg;
     canon_bkt_t              bucket;       // Index of the bucket the packet is targeting
     canon_id_t               id;           // transaction ID
     canon_id_t               reference;    // Reference transaction used as context
-    logic [CANON_RSVD_W-1:0] reserved0;
-    canon_kcommit_t          key_commit;
+    logic [CANON_REQ_RSVD_W-1:0] reserved0;
+    canon_kcommit_t              key_commit;
   } canon_req_hdr_t;
 
   localparam int unsigned CANON_REQ_HDR_BITS  = $bits(canon_req_hdr_t);
@@ -99,9 +100,12 @@ package canon_pkg;
   // Response packet
   // =====================================================================
   // by the interlock.
+
   typedef struct packed {
-    canon_id_t          id;           // matches the originating request
-    canon_len_t         pld_len;      // total payload length in bytes (incl. encryption tag)
+    canon_len_t                  pld_len;   // total payload length in bytes (incl. encryption tag)
+    canon_bkt_t                  bucket;    // Index of the bucket the packet is targeting
+    canon_id_t                   id;        // matches the originating request
+    logic [CANON_RSP_RSVD_W-1:0] reserved0;
   } canon_rsp_hdr_t;
 
   localparam int unsigned CANON_RSP_HDR_BITS  = $bits(canon_rsp_hdr_t);

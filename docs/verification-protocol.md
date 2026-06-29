@@ -68,24 +68,30 @@ A log is a time-ordered sequence of packets; there is one log per direction. Tim
 
 ```
       |127     96|95      64|63      32|31       0|
-      +----------+----------+---------------------+  128
+      +----------+----------+---------------------+  512
       | PLD_LEN  |  BUCKET  |          ID         |
-      +----------+----------+---------------------+    0
+      +----------+----------+---------------------+  384
+      |                                           |
+      +-                                         -+  256
+      |                  RESERVED                 |
+      +-                                         -+  128
+      |                                           |
+      +-------------------------------------------+    0
 ```
 
 ### Common HEADER fields
 
 These three fields sit at the top of both frames, so they land at different absolute offsets in the 512-bit request and the 128-bit response.
 
-**PLD_LEN, bits [511:480] (request) / [127:96] (response)** \
+**PLD_LEN, bits [511:480] \
 Length of the ciphertext payload.
 
 <!-- REVISIT OK to use 32 bit BUCKET? it fits nicely in both REQ and RSP -->
-**BUCKET, bits [479:448] (request) / [95:64] (response)** \
+**BUCKET, bits [479:448] \
 Index of the time bucket the packet is targeting.
 
 <!-- REVISIT do we need the inference flag? -->
-**ID, bits [447:384] (request) / [63:0] (response)** \
+**ID, bits [447:384] \
 Identifier of the transaction. \
 **ID[0]** is the Inference flag, must be set for inference requests. \
 ID=0 is RESERVED for control messages.
@@ -98,9 +104,6 @@ Set to 0 (RESERVED) if no previous transaction is referenced. \
 The REFERENCE feature provides support for multi-turn conversations and multi-packet messages. See [References and multi-part exchanges](#references-and-multi-part-exchanges). \
 REFERENCE must be strictly less than ID.
 (A response inherits its context through its request, so it carries no reference.)
-
-**RESERVED, bits [319:256]** \
-Bits RESERVED for future use.
 
 **KEY_COMMIT, bits [255:0]** \
 Cryptographic commitment to the key material used for this request and its response.
