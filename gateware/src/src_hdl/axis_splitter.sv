@@ -4,9 +4,6 @@
 // when both masters accept, so the two copies stay in lockstep. Purely
 // combinational (no buffering): a master that back-pressures stalls the slave
 // and therefore the other master too.
-//
-// In payload_hash one copy is the verbatim pass-through toward the wire and the
-// other feeds the payload hash (with its header beats masked by glue).
 
 module axis_splitter (
   input  wire        s_valid,

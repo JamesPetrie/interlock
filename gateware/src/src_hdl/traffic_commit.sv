@@ -11,9 +11,8 @@
 //   record     = length || SHA256(header || H(payload))          per packet
 //   overall     = SHA256( record_1 || ... || record_k )          per attestation
 //
-// Structural wiring of small reusable parts: record_layer (which forks the data
-// path through payload_hash) -> serializer -> sha256_msg (bucket) -> serializer
-// -> sha256_msg (overall) -> cert_build.
+// Structural wiring of small reusable parts: record_layer -> serializer
+// -> sha256_msg (bucket) -> serializer -> sha256_msg (overall) -> cert_build.
 //
 // The stages are rate-matched, so nothing back-pressures or is buffered: each
 // digest pulse is captured straight by the next consumer the cycle it fires. A
@@ -58,7 +57,7 @@ module traffic_commit #(
   output wire [255:0] overall
 );
 
-  // ---- record layer (forks the data path through payload_hash) ----
+  // ---- record layer ----
   wire         rec_valid, rec_last;        // element output is a pulse (rate-matched)
   wire [5:0]   rec_bytes;                  // 34 for a record, 0 for the bucket-close element
   wire [15:0]  rec_len;
