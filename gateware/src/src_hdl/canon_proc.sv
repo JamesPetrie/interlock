@@ -57,8 +57,9 @@ module canon_proc
   // Nonce output
   output wire [CANON_NONCE_W-1:0] nonce,
 
-  // Timer input
-  input wire [31:0] timer
+  // Timer tick input
+  input wire        tick,
+  input wire [31:0] timer // TODO sync packets
 );
 
   // ------------------------------------------------------------------
@@ -112,22 +113,25 @@ module canon_proc
   wire canon_id_t      hdr_id;
   wire canon_id_t      hdr_ref;
   wire canon_len_t     hdr_pld_len;
+  wire canon_bkt_t     hdr_bkt;
   wire canon_kcommit_t hdr_kcommit;
   wire                 hdr_rsvd_clr;
 
   generate
     if (DIR == CANON_DIR_REQ) begin : g_canon_req
       wire canon_req_hdr_t parsed = canon_req_hdr_from_wire_bits(shift_data);
+      assign hdr_pld_len  = parsed.pld_len;
+      assign hdr_bkt      = parsed.bucket;
       assign hdr_id       = parsed.id;
       assign hdr_ref      = parsed.reference;
-      assign hdr_pld_len  = parsed.pld_len;
       assign hdr_kcommit  = parsed.key_commit;
       assign hdr_rsvd_clr = (parsed.reserved0 == '0);
     end else begin : g_canon_rsp
       wire canon_rsp_hdr_t parsed = canon_rsp_hdr_from_wire_bits(shift_data);
+      assign hdr_pld_len  = parsed.pld_len;
+      assign hdr_bkt      = parsed.bucket;
       assign hdr_id       = parsed.id;
       assign hdr_ref      = '0;
-      assign hdr_pld_len  = parsed.pld_len;
       assign hdr_kcommit  = '0;
       assign hdr_rsvd_clr = (parsed.reserved0 == '0);
     end
@@ -144,6 +148,15 @@ module canon_proc
   // ------------------------------------------------------------------
 
   canon_id_t      prev_id;
+  canon_bkt_t     curr_bkt;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      curr_bkt <= '0;
+    end else if (tick) begin
+      curr_bkt <= curr_bkt + 1;
+    end
+  end
 
   // header ready for checking
   wire hdr_rdy   = (state == S_HEADER) && &shift_v;
@@ -154,6 +167,7 @@ module canon_proc
   // PLD_LEN check
   wire hdr_pld_len_chk = (hdr_pld_len <= canon_len_t'(PLD_MAX));
   // bucket check
+  wire hdr_bkt_chk = (hdr_bkt == curr_bkt);
   // TODO hdr_bkt_chk
   // ID value validity check
   wire hdr_id_valid_chk  = (hdr_id.id_cont != '0);
@@ -169,6 +183,7 @@ module canon_proc
 
   wire hdr_chk =    hdr_fract_chk
                  && hdr_pld_len_chk
+                 && hdr_bkt_chk
                  && hdr_id_valid_chk
                  && hdr_id_seq_chk
                  && hdr_ref_chk
@@ -230,11 +245,11 @@ module canon_proc
     end
   end
 
-  // bucket boundary pending: set free-flowing by the timer, cleared the cycle
+  // bucket boundary pending: set free-flowing by the timer tick, cleared the cycle
   // the empty boundary beat is emitted (one-shot — no edge/level clear hazard).
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n)            swap <= 1'b0;
-    else if (timer == 1)   swap <= 1'b1;
+    else if (tick)         swap <= 1'b1;
     else if (insert_swap)  swap <= 1'b0;
   end
 

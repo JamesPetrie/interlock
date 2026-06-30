@@ -30,7 +30,9 @@
 // num_buckets). nonce is driven in from canon_proc (inbound id=0 control packet).
 
 module traffic_commit #(
-  parameter int unsigned HDR_BYTES       = 64
+  parameter int unsigned HDR_BYTES       = 64,
+  // keep the empty swap beat in the output
+  parameter bit          OUTPUT_SWAP     = 1
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -57,6 +59,9 @@ module traffic_commit #(
   output wire [255:0] overall
 );
 
+  // Output swap beat masing
+  wire tvalid_unmasked;
+
   // ---- record layer ----
   wire         rec_valid, rec_last;        // element output is a pulse (rate-matched)
   wire [5:0]   rec_bytes;                  // 34 for a record, 0 for the bucket-close element
@@ -69,11 +74,14 @@ module traffic_commit #(
     .clk (clk), .rst_n (rst_n),
     .s_valid (tvalid_s), .s_ready (tready_s), .s_data (tdata_s), .s_keep (tkeep_s),
     .s_last (tlast_s), .s_user (tuser_s),
-    .m_valid (tvalid_m), .m_ready (tready_m), .m_data (tdata_m), .m_keep (tkeep_m),
+    .m_valid (tvalid_unmasked), .m_ready (tready_m), .m_data (tdata_m), .m_keep (tkeep_m),
     .m_last (tlast_m), .m_user (tuser_m),
     .rec_valid (rec_valid), .rec_len (rec_len), .rec_bytes (rec_bytes),
     .rec_digest (rec_digest), .rec_last (rec_last)
   );
+
+  //
+  assign tvalid_m = tvalid_unmasked && (OUTPUT_SWAP || tkeep_m != '0);
 
   // ---- serialize records -> overall hash (always ready: drains an element long
   //      before the next arrives, so record_layer needs no rec_ready) ----

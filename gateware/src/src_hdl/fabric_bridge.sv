@@ -64,6 +64,23 @@ module fabric_bridge
   output wire [1:0]  tse1_mtx_bytevalid
 );
 
+  // Timer
+  localparam TIMER_END = 32'd79_999; // 1ms assuming 80 MHz clock
+
+  logic [31:0] timer;
+  wire         tick = (timer == TIMER_END) ? 1'b1 : 1'b0;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      timer <= '0;
+    end else if (timer == TIMER_END) begin
+      timer <= '0;
+    end else begin
+      timer <= timer + 1;
+    end
+  end
+
+
   // Each direction is sanitized at the Ethernet layer:
   //
   //   MAC-RX ─► eth_deframe ─ AXI-Stream ─► eth_reframe ─► MAC-TX
@@ -140,19 +157,24 @@ module fabric_bridge
     .tlast_m  (req_tlast_cp2tc),
     .tuser_m  (req_tuser_cp2tc),
     .nonce    (cert_nonce),
-    .timer    ('1) // TODO
+    .tick     (tick),
+    .timer    (timer)
   );
 
-  wire         req_tvalid_o, req_tready_o, req_tlast_o;
-  wire [31:0]  req_tdata_o;
-  wire [3:0]   req_tkeep_o;
-  wire [15:0]  req_tuser_o;
+  // ====================================================================
+  // Requests: traffic_commit -> batch_buffer
+  // ====================================================================
+  wire         req_tvalid_tc2bb, req_tready_tc2bb, req_tlast_tc2bb;
+  wire [31:0]  req_tdata_tc2bb;
+  wire [3:0]   req_tkeep_tc2bb;
+  wire [15:0]  req_tuser_tc2bb;
   wire         req_ovr_valid;
   wire [255:0] req_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (CANON_REQ_HDR_BYTES)
-  ) hash_req (
+    .HDR_BYTES (CANON_REQ_HDR_BYTES),
+    .OUTPUT_SWAP(1)
+  ) commit_req (
     .clk      (clk),
     .rst_n    (rst_n),
     .tvalid_s (req_tvalid_cp2tc),
@@ -161,14 +183,40 @@ module fabric_bridge
     .tkeep_s  (req_tkeep_cp2tc),
     .tlast_s  (req_tlast_cp2tc),
     .tuser_s  (req_tuser_cp2tc),
+    .tvalid_m (req_tvalid_tc2bb),
+    .tready_m (req_tready_tc2bb),
+    .tdata_m  (req_tdata_tc2bb),
+    .tkeep_m  (req_tkeep_tc2bb),
+    .tlast_m  (req_tlast_tc2bb),
+    .tuser_m  (req_tuser_tc2bb),
+    .overall_valid (req_ovr_valid),
+    .overall       (req_ovr_digest)
+  );
+
+  wire         req_tvalid_o, req_tready_o, req_tlast_o;
+  wire [31:0]  req_tdata_o;
+  wire [3:0]   req_tkeep_o;
+  wire [15:0]  req_tuser_o;
+
+  batch_buffer #(
+    .OUTPUT_SWAP(0)
+  ) buffer_req (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (req_tvalid_tc2bb),
+    .tready_s (req_tready_tc2bb),
+    .tdata_s  (req_tdata_tc2bb),
+    .tkeep_s  (req_tkeep_tc2bb),
+    .tlast_s  (req_tlast_tc2bb),
+    .tuser_s  (req_tuser_tc2bb),
     .tvalid_m (req_tvalid_o),
     .tready_m (req_tready_o),
     .tdata_m  (req_tdata_o),
     .tkeep_m  (req_tkeep_o),
     .tlast_m  (req_tlast_o),
     .tuser_m  (req_tuser_o),
-    .overall_valid (req_ovr_valid),
-    .overall       (req_ovr_digest)
+    .tick     (tick),
+    .timer    (timer)
   );
 
   eth_reframe #(
@@ -221,12 +269,12 @@ module fabric_bridge
   );
 
   // ====================================================================
-  // Responses: canon_proc -> traffic_commit
+  // Responses: canon_proc -> batch_buffer
   // ====================================================================
-  wire        rsp_tvalid_cp2tc, rsp_tready_cp2tc, rsp_tlast_cp2tc;
-  wire [31:0] rsp_tdata_cp2tc;
-  wire [3:0]  rsp_tkeep_cp2tc;
-  wire [15:0] rsp_tuser_cp2tc;
+  wire        rsp_tvalid_cp2bb, rsp_tready_cp2bb, rsp_tlast_cp2bb;
+  wire [31:0] rsp_tdata_cp2bb;
+  wire [3:0]  rsp_tkeep_cp2bb;
+  wire [15:0] rsp_tuser_cp2bb;
 
   canon_proc #(
     .DIR (CANON_DIR_RSP)
@@ -239,13 +287,43 @@ module fabric_bridge
     .tkeep_s  (rsp_tkeep_i),
     .tlast_s  (rsp_tlast_i),
     .tuser_s  (rsp_tuser_i),
-    .tvalid_m (rsp_tvalid_cp2tc),
-    .tready_m (rsp_tready_cp2tc),
-    .tdata_m  (rsp_tdata_cp2tc),
-    .tkeep_m  (rsp_tkeep_cp2tc),
-    .tlast_m  (rsp_tlast_cp2tc),
-    .tuser_m  (rsp_tuser_cp2tc),
-    .timer    ('1) // TODO
+    .tvalid_m (rsp_tvalid_cp2bb),
+    .tready_m (rsp_tready_cp2bb),
+    .tdata_m  (rsp_tdata_cp2bb),
+    .tkeep_m  (rsp_tkeep_cp2bb),
+    .tlast_m  (rsp_tlast_cp2bb),
+    .tuser_m  (rsp_tuser_cp2bb),
+    .tick     (tick),
+    .timer    (timer)
+  );
+
+  // ====================================================================
+  // Responses: batch_buffer -> traffic_commit
+  // ====================================================================
+  wire        rsp_tvalid_bb2tc, rsp_tready_bb2tc, rsp_tlast_bb2tc;
+  wire [31:0] rsp_tdata_bb2tc;
+  wire [3:0]  rsp_tkeep_bb2tc;
+  wire [15:0] rsp_tuser_bb2tc;
+
+  batch_buffer #(
+    .OUTPUT_SWAP(1)
+  ) buffer_rsp (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (rsp_tvalid_cp2bb),
+    .tready_s (rsp_tready_cp2bb),
+    .tdata_s  (rsp_tdata_cp2bb),
+    .tkeep_s  (rsp_tkeep_cp2bb),
+    .tlast_s  (rsp_tlast_cp2bb),
+    .tuser_s  (rsp_tuser_cp2bb),
+    .tvalid_m (rsp_tvalid_bb2tc),
+    .tready_m (rsp_tready_bb2tc),
+    .tdata_m  (rsp_tdata_bb2tc),
+    .tkeep_m  (rsp_tkeep_bb2tc),
+    .tlast_m  (rsp_tlast_bb2tc),
+    .tuser_m  (rsp_tuser_bb2tc),
+    .tick     (tick),
+    .timer    (timer)
   );
 
   wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
@@ -256,16 +334,17 @@ module fabric_bridge
   wire [255:0] rsp_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (CANON_RSP_HDR_BYTES)
-  ) hash_rsp (
+    .HDR_BYTES (CANON_RSP_HDR_BYTES),
+    .OUTPUT_SWAP(0)
+  ) commit_rsp (
     .clk      (clk),
     .rst_n    (rst_n),
-    .tvalid_s (rsp_tvalid_cp2tc),
-    .tready_s (rsp_tready_cp2tc),
-    .tdata_s  (rsp_tdata_cp2tc),
-    .tkeep_s  (rsp_tkeep_cp2tc),
-    .tlast_s  (rsp_tlast_cp2tc),
-    .tuser_s  (rsp_tuser_cp2tc),
+    .tvalid_s (rsp_tvalid_bb2tc),
+    .tready_s (rsp_tready_bb2tc),
+    .tdata_s  (rsp_tdata_bb2tc),
+    .tkeep_s  (rsp_tkeep_bb2tc),
+    .tlast_s  (rsp_tlast_bb2tc),
+    .tuser_s  (rsp_tuser_bb2tc),
     .tvalid_m (rsp_tvalid_o),
     .tready_m (rsp_tready_o),
     .tdata_m  (rsp_tdata_o),
@@ -301,7 +380,7 @@ module fabric_bridge
     .clk (clk), .rst_n (rst_n), .key (2),
     .in_valid_req (1'b0), .in_overall_req ('0), // pulse sink: cert period (~s) >> HMAC
     .in_valid_rsp (rsp_ovr_valid), .in_overall_rsp (rsp_ovr_digest),
-    .in_nonce ('1),
+    .in_nonce (cert_nonce),
     .c_valid (rspc_tvalid), .c_ready (rspc_tready), .c_data (rspc_tdata),
     .c_keep (rspc_tkeep), .c_last (rspc_tlast), .c_user (rspc_tuser)
   );
