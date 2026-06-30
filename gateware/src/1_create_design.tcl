@@ -16,7 +16,7 @@ import_files -hdl_source {./src/src_hdl/crypto/sha256_msg.sv}
 import_files -hdl_source {./src/src_hdl/crypto/sha256_pkg.sv}
 import_files -hdl_source {./src/src_hdl/crypto/hmac_sha256.sv}
 import_files -hdl_source {./src/src_hdl/axis_splitter.sv}
-import_files -hdl_source {./src/src_hdl/payload_hash.sv}
+import_files -hdl_source {./src/src_hdl/leaf_hash.sv}
 import_files -hdl_source {./src/src_hdl/record_layer.sv}
 import_files -hdl_source {./src/src_hdl/serializer.sv}
 import_files -hdl_source {./src/src_hdl/traffic_commit.sv}

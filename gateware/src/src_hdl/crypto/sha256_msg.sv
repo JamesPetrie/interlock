@@ -25,6 +25,10 @@
 // Auto-framed: there is no `start`. A message is delimited by in_last; the first
 // beat after a close (or after reset) reloads H_INIT. So the caller just streams
 // in_last-delimited messages and reads back one digest per message, in order.
+//
+// `len` is emitted alongside `done`: the byte count of the just-finished message
+// (the same total folded into the padding length word), so a consumer that needs
+// the message length doesn't have to count beats itself.
 
 module sha256_msg
   import sha256_pkg::*;
@@ -34,12 +38,14 @@ module sha256_msg
 
   input  wire         in_valid,
   output wire         in_ready,
+  // TODO how is endianness handled?
   input  wire [31:0]  in_data,      // byte 0 in [7:0]
   input  wire [2:0]   in_bytes,     // valid bytes in this word, 1..4
   input  wire         in_last,      // final word of the message
 
   output wire         done,         // single-cycle pulse with digest valid
-  output wire [255:0] digest
+  output wire [255:0] digest,
+  output wire [31:0]  len           // message byte count, valid with done
 );
 
   typedef enum logic [2:0] {
@@ -64,6 +70,7 @@ module sha256_msg
   logic         msg_first;          // the next block to submit is its message's first
   logic         emit_last;          // the block heading into M_EMIT closes the message
   logic         infl_last;          // the in-flight block closes the message
+  logic [31:0]  infl_bytes;         // byte count of the in-flight (closing) message
 
   wire [63:0] bitlen = {32'b0, msg_bytes} << 3;
   wire        pad_inline = (boff <= 7'd55);   // length fits in the first pad block
@@ -89,8 +96,10 @@ module sha256_msg
 
   logic         done_r;
   logic [255:0] digest_r;
+  logic [31:0]  len_r;
   assign done     = done_r;
   assign digest   = digest_r;
+  assign len      = len_r;
   assign in_ready = (state == M_ABSORB);
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -109,10 +118,12 @@ module sha256_msg
       msg_first  <= 1'b1;
       emit_last  <= 1'b0;
       infl_last  <= 1'b0;
+      infl_bytes <= '0;
       core_start <= 1'b0;
       core_iv_q  <= '0;
       done_r     <= 1'b0;
       digest_r   <= '0;
+      len_r      <= '0;
     end else begin
       core_start <= 1'b0;
       done_r     <= 1'b0;
@@ -125,6 +136,7 @@ module sha256_msg
         if (infl_last) begin
           done_r   <= 1'b1;
           digest_r <= core_digest;
+          len_r    <= infl_bytes;
         end
       end
 
@@ -172,6 +184,7 @@ module sha256_msg
           core_iv_q  <= msg_first ? SHA256_H_INIT : iv;   // latched with core_start
           comp_busy  <= 1'b1;
           infl_last  <= emit_last;
+          infl_bytes <= msg_bytes;                 // full count on the closing block (read at done)
           msg_first  <= emit_last ? 1'b1 : 1'b0;   // next first block reloads H_INIT
           if (emit_last) begin
             boff      <= '0;
