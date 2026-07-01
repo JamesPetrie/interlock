@@ -30,9 +30,11 @@
 // num_buckets). nonce is driven in from canon_proc (inbound id=0 control packet).
 
 module traffic_commit #(
-  parameter int unsigned HDR_BYTES       = 64,
+  parameter int unsigned HDR_BYTES = 64,
   // keep the empty swap beat in the output
-  parameter bit          OUTPUT_SWAP     = 1
+  parameter bit          OUTPUT_SWAP = 1,
+  // number of buckets to combine
+  parameter int unsigned NUM_BUCKETS = 1000
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -83,16 +85,54 @@ module traffic_commit #(
   //
   assign tvalid_m = tvalid_unmasked && (OUTPUT_SWAP || tkeep_m != '0);
 
+  // ---- serialize records -> bucket hash (always ready: drains an element long
+  //      before the next arrives, so record_layer needs no rec_ready) ----
+  wire        sb_ov, sb_or, sb_olast;
+  wire [31:0] sb_od;
+  wire [2:0]  sb_ob;
+
+  serializer #(.MAX_BYTES(34)) u_ser_bucket (
+    .clk (clk), .rst_n (rst_n),
+    .in_valid (rec_valid), .in_ready (/* rate-matched, always ready */),
+    .in_data ({rec_len, rec_digest}), .in_bytes (rec_bytes), .in_last (rec_last),
+    .out_valid (sb_ov), .out_data (sb_od), .out_ready (sb_or),
+    .out_bytes (sb_ob), .out_last (sb_olast)
+  );
+
+  // bucket hash: absorbs continuously
+  wire          bkt_ov;
+  wire [255:0]  bkt_od;
+
+  sha256_msg u_sha_bucket (
+    .clk (clk), .rst_n (rst_n),
+    .in_valid (sb_ov), .in_ready (sb_or), .in_data (sb_od),
+    .in_bytes (sb_ob), .in_last (sb_olast),
+    .done (bkt_ov), .digest (bkt_od)
+  );
+
+  logic [31:0] bkt_cnt;
+  wire         last_bkt = (bkt_cnt == (NUM_BUCKETS-1)) ? 1'b1 : 1'b0;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      bkt_cnt <= '0;
+    end else begin
+      if (bkt_ov) begin
+        bkt_cnt <= !last_bkt ? bkt_cnt+1 : '0;
+      end
+    end
+  end
+
   // ---- serialize records -> overall hash (always ready: drains an element long
   //      before the next arrives, so record_layer needs no rec_ready) ----
   wire        so_ov, so_or, so_olast;
   wire [31:0] so_od;
   wire [2:0]  so_ob;
 
-  serializer #(.MAX_BYTES(34)) u_ser_o (
+  serializer #(.MAX_BYTES(32)) u_ser_overall (
     .clk (clk), .rst_n (rst_n),
-    .in_valid (rec_valid), .in_ready (/* rate-matched, always ready */),
-    .in_data ({rec_len, rec_digest}), .in_bytes (rec_bytes), .in_last (rec_last),
+    .in_valid (bkt_ov), .in_ready (/* rate-matched, always ready */),
+    .in_data (bkt_od),  .in_bytes (32), .in_last (last_bkt),
     .out_valid (so_ov), .out_data (so_od), .out_ready (so_or),
     .out_bytes (so_ob), .out_last (so_olast)
   );
@@ -103,7 +143,7 @@ module traffic_commit #(
   wire          ovr_ov;
   wire [255:0]  ovr_od;
 
-  sha256_msg u_overall (
+  sha256_msg u_sha_overall (
     .clk (clk), .rst_n (rst_n),
     .in_valid (so_ov), .in_ready (so_or), .in_data (so_od),
     .in_bytes (so_ob), .in_last (so_olast),

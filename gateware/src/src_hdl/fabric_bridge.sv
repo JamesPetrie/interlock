@@ -65,7 +65,8 @@ module fabric_bridge
 );
 
   // Timer
-  localparam TIMER_END = 32'd79_999; // 1ms assuming 80 MHz clock
+  localparam TIMER_END     = 32'd79_999; // 1ms assuming 80 MHz clock
+  localparam BKTS_PER_CERT = 1000;
 
   logic [31:0] timer;
   wire         tick = (timer == TIMER_END) ? 1'b1 : 1'b0;
@@ -172,7 +173,8 @@ module fabric_bridge
   wire [255:0] req_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (CANON_REQ_HDR_BYTES),
+    .HDR_BYTES   (CANON_REQ_HDR_BYTES),
+    .NUM_BUCKETS (BKTS_PER_CERT)
     .OUTPUT_SWAP(1)
   ) commit_req (
     .clk      (clk),
@@ -334,8 +336,9 @@ module fabric_bridge
   wire [255:0] rsp_ovr_digest;
 
   traffic_commit #(
-    .HDR_BYTES (CANON_RSP_HDR_BYTES),
-    .OUTPUT_SWAP(0)
+    .HDR_BYTES   (CANON_RSP_HDR_BYTES),
+    .NUM_BUCKETS (BKTS_PER_CERT)
+    .OUTPUT_SWAP (0)
   ) commit_rsp (
     .clk      (clk),
     .rst_n    (rst_n),
@@ -356,33 +359,20 @@ module fabric_bridge
   );
 
   // request pipeline certificate -> cert_merge
-  wire        reqc_tvalid, reqc_tready, reqc_tlast;
-  wire [31:0] reqc_tdata;
-  wire [3:0]  reqc_tkeep;
-  wire [15:0] reqc_tuser;
+  wire        c_tvalid, c_tready, c_tlast;
+  wire [31:0] c_tdata;
+  wire [3:0]  c_tkeep;
+  wire [15:0] c_tuser;
 
-  cert_build #() u_cert_req (
-    .clk (clk), .rst_n (rst_n), .key (2),
+  cert_build #(
+    .NUM_BUCKETS(BKTS_PER_CERT)
+  ) u_cert (
+    .clk (clk), .rst_n (rst_n), .key (99),
     .in_valid_req (req_ovr_valid), .in_overall_req (req_ovr_digest), // pulse sink: cert period (~s) >> HMAC
-    .in_valid_rsp (1'b0), .in_overall_rsp ('0),
-    .in_nonce (cert_nonce),
-    .c_valid (reqc_tvalid), .c_ready (reqc_tready), .c_data (reqc_tdata),
-    .c_keep (reqc_tkeep), .c_last (reqc_tlast), .c_user (reqc_tuser)
-  );
-
-  // response pipeline certificate -> cert_merge
-  wire        rspc_tvalid, rspc_tready, rspc_tlast;
-  wire [31:0] rspc_tdata;
-  wire [3:0]  rspc_tkeep;
-  wire [15:0] rspc_tuser;
-
-  cert_build #() u_cert_rsp (
-    .clk (clk), .rst_n (rst_n), .key (2),
-    .in_valid_req (1'b0), .in_overall_req ('0), // pulse sink: cert period (~s) >> HMAC
     .in_valid_rsp (rsp_ovr_valid), .in_overall_rsp (rsp_ovr_digest),
     .in_nonce (cert_nonce),
-    .c_valid (rspc_tvalid), .c_ready (rspc_tready), .c_data (rspc_tdata),
-    .c_keep (rspc_tkeep), .c_last (rspc_tlast), .c_user (rspc_tuser)
+    .c_valid (c_tvalid), .c_ready (c_tready), .c_data (c_tdata),
+    .c_keep (c_tkeep), .c_last (c_tlast), .c_user (c_tuser)
   );
 
   // cert_merge -> response reframe
@@ -400,18 +390,18 @@ module fabric_bridge
     .tkeep_s0  (rsp_tkeep_o),
     .tlast_s0  (rsp_tlast_o),
     .tuser_s0  (rsp_tuser_o),
-    .tvalid_s1 (rspc_tvalid),
-    .tready_s1 (rspc_tready),
-    .tdata_s1  (rspc_tdata),
-    .tkeep_s1  (rspc_tkeep),
-    .tlast_s1  (rspc_tlast),
-    .tuser_s1  (rspc_tuser),
-    .tvalid_s2 (reqc_tvalid),
-    .tready_s2 (reqc_tready),
-    .tdata_s2  (reqc_tdata),
-    .tkeep_s2  (reqc_tkeep),
-    .tlast_s2  (reqc_tlast),
-    .tuser_s2  (reqc_tuser),
+    .tvalid_s1 (c_tvalid),
+    .tready_s1 (c_tready),
+    .tdata_s1  (c_tdata),
+    .tkeep_s1  (c_tkeep),
+    .tlast_s1  (c_tlast),
+    .tuser_s1  (c_tuser),
+    .tvalid_s2 (1'b0),
+    .tready_s2 (),
+    .tdata_s2  (),
+    .tkeep_s2  (),
+    .tlast_s2  (),
+    .tuser_s2  (),
     .tvalid_m  (mrg_tvalid),
     .tready_m  (mrg_tready),
     .tdata_m   (mrg_tdata),

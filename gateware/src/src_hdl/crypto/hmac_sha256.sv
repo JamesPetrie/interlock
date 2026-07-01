@@ -1,23 +1,29 @@
-// hmac_sha256 — HMAC-SHA-256 (and a transparent plain-SHA mode) over a
-// streamed byte message, wrapping a single sha256_msg engine.
-//
-// The caller streams the message exactly as it would to sha256_msg (start,
-// in_valid/in_ready, in_data byte 0 in [7:0], in_bytes 1..4, in_last). With
-// hmac_en low the bytes pass straight through and digest = SHA-256(message).
-// With hmac_en high the wrapper computes HMAC-SHA-256:
+// hmac_sha256 — HMAC-SHA-256 over a streamed byte message, wrapping a single
+// sha256_msg engine. Same auto-framed interface as sha256_msg: the caller
+// streams an in_last-delimited message (in_valid/in_ready, in_data byte 0 in
+// [7:0], in_bytes 1..4, in_last) and reads back one digest per message. There
+// is no start strobe and no mode bit — the block always computes HMAC-SHA-256:
 //
 //   inner = SHA256( (K' ^ ipad) || message )
 //   mac   = SHA256( (K' ^ opad) || inner )
 //
 // where K' is the secret KEY zero-padded to the 64-byte block. The wrapper
 // injects the ipad/opad block ahead of the caller's stream and runs the outer
-// pass itself, so the caller is unaware of the two-pass structure — it just
-// streams a message and reads back a digest. This lets traffic_commit drive
-// one engine for both the plain hash chain and the HMAC seed/attestation.
+// pass itself, so the caller is unaware of the two-pass structure. For a plain
+// (un-keyed) hash, instantiate sha256_msg directly — it presents this same
+// interface.
+//
+// A message is framed by in_last, like sha256_msg: the first in_valid beat
+// after reset or a finished mac begins a new message (in_ready stays low while
+// the ipad block is injected, so that first beat is naturally held). Unlike
+// sha256_msg, the two passes share one engine and cannot overlap, so HMACs do
+// not pipeline back-to-back — the next message is taken only once the previous
+// mac completes. (cert_build drives one message per certificate period, far
+// longer than a mac, so this costs nothing there.)
 //
 // key is held on a port (the prototype ties it to a build-time constant; a
 // real deployment drives it from secure storage). It is sampled continuously,
-// so it must be stable across a start..done.
+// so it must be stable across a message.
 
 module hmac_sha256
   import sha256_pkg::swap32;
@@ -27,8 +33,6 @@ module hmac_sha256
 
   input  wire [255:0] key,          // HMAC secret (32 bytes, byte 0 in MSBs)
 
-  input  wire         start,        // begin; hmac_en sampled here
-  input  wire         hmac_en,      // 1: HMAC, 0: plain SHA-256
   input  wire         in_valid,
   output wire         in_ready,
   input  wire [31:0]  in_data,      // message byte 0 in [7:0]
@@ -36,7 +40,8 @@ module hmac_sha256
   input  wire         in_last,
 
   output wire         done,
-  output wire [255:0] digest
+  output wire [255:0] digest,
+  output wire [31:0]  len           // message byte count, valid with done
 );
 
   // Key padded to the block and XORed with the HMAC constants, byte 0 in the
@@ -45,7 +50,7 @@ module hmac_sha256
   wire [511:0] kopad = {key ^ {32{8'h5c}}, {32{8'h5c}}};
 
   typedef enum logic [2:0] {
-    H_IDLE, H_PLAIN, H_IPAD, H_IMSG, H_IWAIT, H_OPAD, H_OMSG, H_OWAIT
+    H_IDLE, H_IPAD, H_IMSG, H_IWAIT, H_OPAD, H_OMSG, H_OWAIT
   } state_t;
   state_t state;
 
@@ -76,10 +81,10 @@ module hmac_sha256
     .digest   (m_digest)
   );
 
-  // In the transparent phases (plain hash, or the message half of the inner
-  // pass) the caller streams straight into the engine; in the inject phases the
-  // engine is fed from the shift register and the caller is back-pressured.
-  wire transparent = (state == H_PLAIN) || (state == H_IMSG);
+  // In the transparent phase (the message half of the inner pass) the caller
+  // streams straight into the engine; in the inject phases the engine is fed
+  // from the shift register and the caller is back-pressured.
+  wire transparent = (state == H_IMSG);
   wire inject      = (state == H_IPAD) || (state == H_OPAD) || (state == H_OMSG);
   assign in_ready = transparent && m_ready;
 
@@ -101,8 +106,11 @@ module hmac_sha256
 
   logic         done_r;
   logic [255:0] digest_r;
+  logic [31:0]  msg_len;            // caller bytes absorbed for this message
+  logic [31:0]  len_r;
   assign done   = done_r;
   assign digest = digest_r;
+  assign len    = len_r;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -110,22 +118,23 @@ module hmac_sha256
       fbuf     <= '0;
       fcnt     <= '0;
       inner    <= '0;
+      msg_len  <= '0;
       done_r   <= 1'b0;
       digest_r <= '0;
+      len_r    <= '0;
     end else begin
       done_r  <= 1'b0;
 
       case (state)
-        // for HMAC, queue the ipad block ahead of the message (the engine
-        // auto-starts on the first injected/streamed beat)
-        H_IDLE: if (start) begin
+        // queue the ipad block ahead of the message; the first in_valid beat
+        // frames the message (held by in_ready low until H_IMSG). The engine
+        // auto-starts on the first injected beat.
+        H_IDLE: if (in_valid) begin
           fbuf    <= kipad;
           fcnt    <= 5'd16;
-          state   <= state_t'(hmac_en ? H_IPAD : H_PLAIN);
+          msg_len <= '0;
+          state   <= H_IPAD;
         end
-
-        // ---- plain SHA-256: transparent passthrough ----
-        H_PLAIN: if (m_done) begin digest_r <= m_digest; done_r <= 1'b1; state <= H_IDLE; end
 
         // ---- HMAC inner: SHA256( (K^ipad) || message ) ----
         H_IPAD: if (m_fire) begin
@@ -133,7 +142,10 @@ module hmac_sha256
           fcnt <= fcnt - 5'd1;
           if (fcnt == 1) state <= H_IMSG;
         end
-        H_IMSG: if (in_valid && m_ready && in_last) state <= H_IWAIT;
+        H_IMSG: if (in_valid && m_ready) begin
+          msg_len <= msg_len + {29'b0, in_bytes};   // count caller bytes for len
+          if (in_last) state <= H_IWAIT;
+        end
         H_IWAIT: if (m_done) begin
           inner   <= m_digest;                // inner done; queue the outer pass
           fbuf    <= kopad;
@@ -152,7 +164,7 @@ module hmac_sha256
           fcnt <= fcnt - 5'd1;
           if (fcnt == 1) state <= H_OWAIT;
         end
-        H_OWAIT: if (m_done) begin digest_r <= m_digest; done_r <= 1'b1; state <= H_IDLE; end
+        H_OWAIT: if (m_done) begin digest_r <= m_digest; len_r <= msg_len; done_r <= 1'b1; state <= H_IDLE; end
 
         default: state <= H_IDLE;
       endcase
