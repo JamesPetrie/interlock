@@ -28,6 +28,7 @@ Checks run on each packet as it streams through, and the verdict is available at
   - `ID` validity check. (ID 0/1 are reserved for control packets)
   - `ID` monotonity check.
   - `PLD_LEN` range check (must fit the maximum canonical payload).
+  - `PLD_LEN` remainder check for inference packets (must be a multiple of TOKEN_BYTES)
   - `REFERENCE` validity check (is less than current ID)
   - `BUCKET` match check
   - `RESERVED` value check

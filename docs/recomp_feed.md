@@ -13,7 +13,7 @@ the running total `Û`, and hands off the result.
   AXIS in  ───────────▶ │              recomp_feed              │ ───────────▶ AXIS out
   tuser:                │                                       │ tuser:
    len @ beat #0        │  forward all but the final response   │  len @ beat#0
-   swap @ tlast         │                                       │
+                        │                                       │
                         │                                       │
          Û ◀─────────── │  final response:                      │ ◀─────────── AXIS est
                         │   START ─▶ len,timing,tok_0 estimates │
@@ -34,7 +34,7 @@ The challenged response however is captured into a buffer and fed to the recompu
   a. the packet was not full and the estimate for token_N+1 arrives (expecting the special end-of-stream entry to have high probability)
   b. the packet was full and the estimate for token_N arrives (no point revealing token_N since token_N+1 is not in this packet)
 
-  The final estimate is still scored in both cases — in (b) token_N is scored from the buffered token even though it is not revealed, so a response spanning multiple packets is scored packet-by-packet with no cross-packet token context. A closing CTRL packet then ends the recomputation.
+  The final estimate is still scored in both cases — in (b) token_N is scored from the buffered token even though it is not revealed, so a response spanning multiple packets is scored packet-by-packet with no cross-packet token context.
 
 ## Timing estimate
 
@@ -44,17 +44,14 @@ The timing estimate predicts the bucket difference between the challenged respon
 
 **Egress**
 
-| Frame | Format | Meaning |
-|---|---|---|
-| **CTRL**  | RESERVED header, no payload | Recomputation feed START/END |
-| **TOKEN** | No header, just one token (`CANON_TOK_BYTES`) | reveal token `i`, after its estimate |
+A reveal is a single `(index, token)` pair, no header.
 
 Forwarded **context** packets are not reframed by the feed — they pass
 through verbatim with only the beat-#0 length carried on `tuser`.
 
 **Ingress**
 
-An estimate is a list of `(value, probability)` pairs:
+An estimate is a list of `(value, probability)` pairs, no header:
 
 | Entry | Meaning |
 |---|---|

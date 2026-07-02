@@ -175,6 +175,8 @@ module canon_proc
                        && (shift_keep[HDR_BYTES-1 -: 4] == '1); // tail tkeep all 1s
   // PLD_LEN check
   wire hdr_pld_len_chk = (hdr_pld_len <= canon_len_t'(PLD_MAX));
+  // PLD_LEN remainder check for inference packets
+  wire hdr_pld_rem_chk = !hdr_id.inf || (hdr_pld_len % canon_len_t'(CANON_TOK_BYTES)) == '0;
   // bucket check
   wire hdr_bkt_chk = (hdr_bkt == curr_bkt);
   // TODO hdr_bkt_chk
@@ -192,6 +194,7 @@ module canon_proc
 
   wire hdr_chk =    hdr_fract_chk
                  && hdr_pld_len_chk
+                 && hdr_pld_rem_chk
                  && hdr_bkt_chk
                  && hdr_id_valid_chk
                  && hdr_id_seq_chk
