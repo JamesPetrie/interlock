@@ -29,7 +29,13 @@
 
 module fabric_bridge
   import canon_pkg::*;          // CANON_DIR_*, CANON_*_HDR_BYTES (used on the canon_proc instances)
-(
+#(
+  // bucket period in clk cycles - 1 (tick at timer == TIMER_END); 1 ms at
+  // the 80 MHz fabric clock. TBs shrink both of these.
+  parameter int unsigned TIMER_END     = 79_999,
+  // bucket periods per certificate (one cert per ~s)
+  parameter int unsigned BKTS_PER_CERT = 1000
+) (
   input  wire        clk,      // fabric clock (CORETSE M*CLK domain; both MACs share it)
   input  wire        rst_n,    // active-low synchronous reset
   // ---- Port 0 / CORETSE_0 ----
@@ -65,16 +71,13 @@ module fabric_bridge
 );
 
   // Timer
-  localparam TIMER_END     = 32'd79_999; // 1ms assuming 80 MHz clock
-  localparam BKTS_PER_CERT = 1000;
-
   logic [31:0] timer;
   wire         tick = (timer == TIMER_END) ? 1'b1 : 1'b0;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       timer <= '0;
-    end else if (timer == TIMER_END) begin
+    end else if (tick) begin
       timer <= '0;
     end else begin
       timer <= timer + 1;
@@ -174,7 +177,7 @@ module fabric_bridge
 
   traffic_commit #(
     .HDR_BYTES   (CANON_REQ_HDR_BYTES),
-    .NUM_BUCKETS (BKTS_PER_CERT)
+    .NUM_BUCKETS (BKTS_PER_CERT),
     .OUTPUT_SWAP(1)
   ) commit_req (
     .clk      (clk),
@@ -337,7 +340,7 @@ module fabric_bridge
 
   traffic_commit #(
     .HDR_BYTES   (CANON_RSP_HDR_BYTES),
-    .NUM_BUCKETS (BKTS_PER_CERT)
+    .NUM_BUCKETS (BKTS_PER_CERT),
     .OUTPUT_SWAP (0)
   ) commit_rsp (
     .clk      (clk),

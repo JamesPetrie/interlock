@@ -36,11 +36,15 @@ Checks run on each packet as it streams through, and the verdict is available at
 
 Dropped packets are simply dropped — not counted, not escalated; recovery, if needed, is the endpoints' job via a new request.
 
+## Internal drop TODO
+
 ## Nonce capture
 
 One reserved transaction carries a **nonce** rather than a normal request: the packet whose `ID` is zero. It fails the ordinary `ID` validity check, so it is **suppressed** like any other header-check failure — it never reaches the buffer — but its `KEY_COMMIT` field is latched into the `nonce` register and driven continuously on the `nonce` output until the next nonce packet replaces it.
 
 Only the low `CANON_NONCE_W` bits of `KEY_COMMIT` are kept. The capture is gated on a **non-fractional** header: an `ID == 0` match is only trusted when the header is a single contiguous packet, so a fractional or spliced header window can never latch a nonce.
+
+## Timer synchronization TODO
 
 ## Pipelining — back-to-back packets
 

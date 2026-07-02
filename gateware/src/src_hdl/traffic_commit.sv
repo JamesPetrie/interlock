@@ -61,8 +61,11 @@ module traffic_commit #(
   output wire [255:0] overall
 );
 
-  // Output swap beat masing
-  wire tvalid_unmasked;
+  // Output swap-beat masking (OUTPUT_SWAP=0): the stripped beat is consumed
+  // internally — downstream never sees its valid, so its handshake must not
+  // depend on downstream ready (a ready-follows-valid sink would deadlock).
+  wire recl_tvalid_m;
+  wire recl_tready_m;
 
   // ---- record layer ----
   wire         rec_valid, rec_last;        // element output is a pulse (rate-matched)
@@ -76,14 +79,14 @@ module traffic_commit #(
     .clk (clk), .rst_n (rst_n),
     .s_valid (tvalid_s), .s_ready (tready_s), .s_data (tdata_s), .s_keep (tkeep_s),
     .s_last (tlast_s), .s_user (tuser_s),
-    .m_valid (tvalid_unmasked), .m_ready (tready_m), .m_data (tdata_m), .m_keep (tkeep_m),
-    .m_last (tlast_m), .m_user (tuser_m),
+    .m_valid (recl_tvalid_m), .m_ready (recl_tready_m), .m_data (tdata_m),
+    .m_keep (tkeep_m), .m_last (tlast_m), .m_user (tuser_m),
     .rec_valid (rec_valid), .rec_len (rec_len), .rec_bytes (rec_bytes),
     .rec_digest (rec_digest), .rec_last (rec_last)
   );
 
-  //
-  assign tvalid_m = tvalid_unmasked && (OUTPUT_SWAP || tkeep_m != '0);
+  assign tvalid_m       = recl_tvalid_m && (OUTPUT_SWAP || tkeep_m != '0);
+  assign recl_tready_m  = tready_m || (recl_tvalid_m && !tvalid_m);
 
   // ---- serialize records -> bucket hash (always ready: drains an element long
   //      before the next arrives, so record_layer needs no rec_ready) ----

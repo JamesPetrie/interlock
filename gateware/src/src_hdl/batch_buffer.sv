@@ -89,6 +89,7 @@ module batch_buffer #(
 
   logic       fill_sel;  // always valid
   logic [1:0] drain_sel; // bit[1] is valid flag
+  logic       first_tick_seen; // set at the first tick
 
   // ------------------------------------------------------------------
   // Fill — admit, prefix, stream, commit/abandon
@@ -152,6 +153,7 @@ module batch_buffer #(
     if (!rst_n) begin
       fill_sel   <= 1'b0; // bank 0 (always valid)
       drain_sel  <= 2'b01; // invalid, bank 1
+      first_tick_seen <= 1'b0;
       fstate     <= F_ADMIT;
       wr_ptr     <= '0;
       wr_cmt     <= '0;
@@ -281,11 +283,13 @@ module batch_buffer #(
         rd_ptr       <= '0;
 
         // Write side can only swap at the delimiter
+
+        first_tick_seen <= 1'b1;
       end
 
       if (in_delimiter) begin
         // Swap fill side
-        fill_sel <= ~fill_sel;
+        fill_sel <= !fill_sel;
         wr_ptr   <= '0;
         wr_cmt   <= '0;
 
@@ -298,6 +302,9 @@ module batch_buffer #(
         drain_sel[1] <= 1'b1; // mark the drain bank selctor valid
         if (rd_limit != '0) begin
           dstate <= D_PFX_RD;
+        end else if (OUTPUT_SWAP && first_tick_seen) begin
+          // empty bucket: still emit the trailing swap beat (except for grace #0)
+          dstate <= D_SWAP;
         end
       end
 
