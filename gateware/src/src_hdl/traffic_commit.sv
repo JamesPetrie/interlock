@@ -128,14 +128,19 @@ module traffic_commit #(
 
   // ---- serialize records -> overall hash (always ready: drains an element long
   //      before the next arrives, so record_layer needs no rec_ready) ----
+  localparam int unsigned SO_BYTES = $bits(bkt_od)/8;
+  localparam int unsigned SO_IB_W  = $clog2(SO_BYTES+1);
+
+  wire [SO_IB_W-1:0] so_ib = SO_BYTES;
+
   wire        so_ov, so_or, so_olast;
   wire [31:0] so_od;
   wire [2:0]  so_ob;
 
-  serializer #(.MAX_BYTES(32)) u_ser_overall (
+  serializer #(.MAX_BYTES(SO_BYTES)) u_ser_overall (
     .clk (clk), .rst_n (rst_n),
     .in_valid (bkt_ov), .in_ready (/* rate-matched, always ready */),
-    .in_data (bkt_od),  .in_bytes (32), .in_last (last_bkt),
+    .in_data (bkt_od),  .in_bytes (so_ib), .in_last (last_bkt),
     .out_valid (so_ov), .out_data (so_od), .out_ready (so_or),
     .out_bytes (so_ob), .out_last (so_olast)
   );

@@ -105,6 +105,18 @@ module fabric_bridge
   localparam logic [47:0] MAC_CLIENT = 48'h02_00_00_00_00_01;
   localparam logic [47:0] MAC_SERVER = 48'h02_00_00_00_00_02;
 
+  // canon_proc sync packets, each spliced into the *opposite* direction's
+  // egress mux — feedback toward that direction's sender
+  wire        sync_req_tvalid, sync_req_tready, sync_req_tlast;
+  wire [31:0] sync_req_tdata;
+  wire [3:0]  sync_req_tkeep;
+  wire [15:0] sync_req_tuser;
+
+  wire        sync_rsp_tvalid, sync_rsp_tready, sync_rsp_tlast;
+  wire [31:0] sync_rsp_tdata;
+  wire [3:0]  sync_rsp_tkeep;
+  wire [15:0] sync_rsp_tuser;
+
   // ====================================================================
   // Requests: CORETSE_0 MAC-RX -> core -> CORETSE_1 MAC-TX
   // ====================================================================
@@ -161,6 +173,13 @@ module fabric_bridge
     .tlast_m  (req_tlast_cp2tc),
     .tuser_m  (req_tuser_cp2tc),
     .nonce    (cert_nonce),
+    // sync toward the client (spliced into the response egress mux)
+    .tvalid_sync (sync_req_tvalid),
+    .tready_sync (sync_req_tready),
+    .tdata_sync  (sync_req_tdata),
+    .tkeep_sync  (sync_req_tkeep),
+    .tlast_sync  (sync_req_tlast),
+    .tuser_sync  (sync_req_tuser),
     .tick     (tick),
     .timer    (timer)
   );
@@ -224,18 +243,54 @@ module fabric_bridge
     .timer    (timer)
   );
 
+  // 2×1 request-egress mux: forwarded requests (port 0, default grant) +
+  // the response direction's sync packets toward the server
+  wire         req_mrg_tvalid, req_mrg_tready, req_mrg_tlast;
+  wire [31:0]  req_mrg_tdata;
+  wire [3:0]   req_mrg_tkeep;
+  wire [15:0]  req_mrg_tuser;
+
+  axis_mux3 u_req_out_merge (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .tvalid_s0 (req_tvalid_o),
+    .tready_s0 (req_tready_o),
+    .tdata_s0  (req_tdata_o),
+    .tkeep_s0  (req_tkeep_o),
+    .tlast_s0  (req_tlast_o),
+    .tuser_s0  (req_tuser_o),
+    .tvalid_s1 (1'b0),
+    .tready_s1 (),
+    .tdata_s1  (),
+    .tkeep_s1  (),
+    .tlast_s1  (),
+    .tuser_s1  (),
+    .tvalid_s2 (sync_rsp_tvalid),
+    .tready_s2 (sync_rsp_tready),
+    .tdata_s2  (sync_rsp_tdata),
+    .tkeep_s2  (sync_rsp_tkeep),
+    .tlast_s2  (sync_rsp_tlast),
+    .tuser_s2  (sync_rsp_tuser),
+    .tvalid_m  (req_mrg_tvalid),
+    .tready_m  (req_mrg_tready),
+    .tdata_m   (req_mrg_tdata),
+    .tkeep_m   (req_mrg_tkeep),
+    .tlast_m   (req_mrg_tlast),
+    .tuser_m   (req_mrg_tuser)
+  );
+
   eth_reframe #(
     .FORCE_DST (MAC_SERVER),
     .FORCE_SRC (MAC_CLIENT)
   ) reframe_req (
     .clk           (clk),
     .rst_n         (rst_n),
-    .tvalid        (req_tvalid_o),
-    .tready        (req_tready_o),
-    .tdata         (req_tdata_o),
-    .tkeep         (req_tkeep_o),
-    .tlast         (req_tlast_o),
-    .tuser         (req_tuser_o),
+    .tvalid        (req_mrg_tvalid),
+    .tready        (req_mrg_tready),
+    .tdata         (req_mrg_tdata),
+    .tkeep         (req_mrg_tkeep),
+    .tlast         (req_mrg_tlast),
+    .tuser         (req_mrg_tuser),
     .out_rdy       (tse1_mtx_rdy),
     .out_acpt      (tse1_mtx_acpt),
     .out_sof       (tse1_mtx_sof),
@@ -298,6 +353,14 @@ module fabric_bridge
     .tkeep_m  (rsp_tkeep_cp2bb),
     .tlast_m  (rsp_tlast_cp2bb),
     .tuser_m  (rsp_tuser_cp2bb),
+    .nonce    (),
+    // sync toward the server (spliced into the request egress mux)
+    .tvalid_sync (sync_rsp_tvalid),
+    .tready_sync (sync_rsp_tready),
+    .tdata_sync  (sync_rsp_tdata),
+    .tkeep_sync  (sync_rsp_tkeep),
+    .tlast_sync  (sync_rsp_tlast),
+    .tuser_sync  (sync_rsp_tuser),
     .tick     (tick),
     .timer    (timer)
   );
@@ -384,7 +447,7 @@ module fabric_bridge
   wire [3:0]  mrg_tkeep;
   wire [15:0] mrg_tuser;
 
-  axis_mux3 u_cert_merge (
+  axis_mux3 u_rsp_out_merge (
     .clk       (clk),
     .rst_n     (rst_n),
     .tvalid_s0 (rsp_tvalid_o),
@@ -399,12 +462,12 @@ module fabric_bridge
     .tkeep_s1  (c_tkeep),
     .tlast_s1  (c_tlast),
     .tuser_s1  (c_tuser),
-    .tvalid_s2 (1'b0),
-    .tready_s2 (),
-    .tdata_s2  (),
-    .tkeep_s2  (),
-    .tlast_s2  (),
-    .tuser_s2  (),
+    .tvalid_s2 (sync_req_tvalid),
+    .tready_s2 (sync_req_tready),
+    .tdata_s2  (sync_req_tdata),
+    .tkeep_s2  (sync_req_tkeep),
+    .tlast_s2  (sync_req_tlast),
+    .tuser_s2  (sync_req_tuser),
     .tvalid_m  (mrg_tvalid),
     .tready_m  (mrg_tready),
     .tdata_m   (mrg_tdata),

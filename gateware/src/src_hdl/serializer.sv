@@ -1,15 +1,4 @@
 // serializer — parallel byte vector -> 32-bit AXI-Stream byte stream.
-//
-// Converts the commitment hierarchy's parallel stage outputs into the byte
-// stream a sha256_msg consumes: each input "element" is up to MAX_BYTES bytes
-// (in_data, byte 0 in the MSBs, in_bytes valid) plus an in_last flag marking the
-// element that closes the hash message. The block shifts the element out four
-// bytes at a time and asserts out_last on the closing element's final word.
-//
-// In traffic_commit one instance feeds the bucket hash from the record stream
-// (element = length || H(packet), in_last = batch boundary) and another feeds
-// the overall hash from the bucket-digest stream (element = bucket digest,
-// in_last = the per-second boundary).
 
 module serializer
   import sha256_pkg::swap32;

@@ -37,9 +37,14 @@ package canon_pkg;
 
   // Request identifier
   typedef struct packed {
-    logic                    inf;     // MSB 1: inference packet, 0: other
     logic [CANON_ID_W-1-1:0] id_cont; // unique identifier bits continued
+    logic                    inf;     // LSB 1: inference packet, 0: other
+
   } canon_id_t;
+
+  // Reserved IDs (concat in field order — Icarus has no assignment patterns):
+  localparam canon_id_t CANON_CERT_ID = canon_id_t'(0); // reserved for certificates
+  localparam canon_id_t CANON_SYNC_ID = canon_id_t'(1); // reserved for sync packets
 
   // =====================================================================
   // Request packet

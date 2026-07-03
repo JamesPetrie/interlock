@@ -114,6 +114,10 @@ module cert_build
   logic cuser_pend;     // the frame's length rides its first beat
 
   // ---- m -> HMAC: stream the message into the HMAC core ----
+  localparam int unsigned SM_IB_W = $clog2(M_BYTES+1);
+
+  wire [SM_IB_W-1:0] sm_ib = M_BYTES;
+
   wire         sm_ov, sm_or, sm_last;
   wire [31:0]  sm_od;
   wire [2:0]   sm_ob;
@@ -123,7 +127,7 @@ module cert_build
   serializer #(.MAX_BYTES(M_BYTES)) u_ser_m (
     .clk (clk), .rst_n (rst_n),
     .in_valid (digests_valid), .in_ready (/* idle: one m per ~s period */),
-    .in_data (m_reg), .in_bytes (M_BYTES), .in_last (1'b1),
+    .in_data (m_reg), .in_bytes (sm_ib), .in_last (1'b1),
     .out_valid (sm_ov), .out_data (sm_od), .out_ready (sm_or),
     .out_bytes (sm_ob), .out_last (sm_last)
   );
@@ -138,6 +142,10 @@ module cert_build
   );
 
   // ---- frame -> output: stream [ reserved hdr (zeros) || m || tau ] out ----
+  localparam int unsigned SF_IB_W = $clog2(FRAME_BYTES+1);
+
+  wire [SF_IB_W-1:0] sf_ib = FRAME_BYTES;
+
   wire         sf_ov, sf_last;
   wire [31:0]  sf_od;
   wire [2:0]   sf_ob;
@@ -145,7 +153,7 @@ module cert_build
   serializer #(.MAX_BYTES(FRAME_BYTES)) u_ser_f (
     .clk (clk), .rst_n (rst_n),
     .in_valid (h_done), .in_ready (/* idle: one frame per ~cert period */),
-    .in_data ({{(HDR_BYTES*8){1'b0}}, m_reg, tau}), .in_bytes (FRAME_BYTES), .in_last (1'b1),
+    .in_data ({{(HDR_BYTES*8){1'b0}}, m_reg, tau}), .in_bytes (sf_ib), .in_last (1'b1),
     .out_valid (sf_ov), .out_data (sf_od), .out_ready (c_ready),
     .out_bytes (sf_ob), .out_last (sf_last)
   );
