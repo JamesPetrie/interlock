@@ -21,7 +21,7 @@ import_files -hdl_source {./src/src_hdl/record_layer.sv}
 import_files -hdl_source {./src/src_hdl/serializer.sv}
 import_files -hdl_source {./src/src_hdl/traffic_commit.sv}
 import_files -hdl_source {./src/src_hdl/cert_build.sv}
-import_files -hdl_source {./src/src_hdl/cert_merge.sv}
+import_files -hdl_source {./src/src_hdl/axis_mux3.sv}
 
 build_design_hierarchy
 

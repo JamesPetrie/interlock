@@ -1,21 +1,6 @@
-// cert_merge — 3×1 AXI-Stream packet arbiter for the certificate egress
-// (see docs/prod_ilock_pipeline_custom.md and docs/traffic_commit.md,
-// "Certificate egress").
-//
-// Interleaves the egress-side packet stream with the certificate ports of
-// both directions onto the single AXIS stream the reframe edge turns into
-// wire frames. Arbitration is packet-granular: the grant is locked from a
-// packet's first beat to its tlast, so packets never interleave, and is
-// re-evaluated only between packets — certificates first, the packet stream
-// as the default. A pending certificate is therefore taken at the next
-// packet boundary even when the packet stream never goes idle; at one cert
-// per direction per batch (bandwidth the fill side reserves, see the doc)
-// the cert ports cannot meaningfully delay the packet stream.
-//
-// All tuser metadata (byte length on beat #0) passes through with the
-// granted stream.
+// axis_mux3 — 3×1 AXI-Stream packet mux
 
-module cert_merge (
+module axis_mux3 (
   input  wire        clk,
   input  wire        rst_n,
 
@@ -27,7 +12,7 @@ module cert_merge (
   input  wire        tlast_s0,
   input  wire [15:0] tuser_s0,
 
-  // AXI-Stream slave 1: certificate port (highest priority)
+  // AXI-Stream slave 1: insertion port
   input  wire        tvalid_s1,
   output wire        tready_s1,
   input  wire [31:0] tdata_s1,
@@ -35,7 +20,7 @@ module cert_merge (
   input  wire        tlast_s1,
   input  wire [15:0] tuser_s1,
 
-  // AXI-Stream slave 2: certificate port
+  // AXI-Stream slave 2: insertion port (highest priority)
   input  wire        tvalid_s2,
   output wire        tready_s2,
   input  wire [31:0] tdata_s2,
@@ -43,7 +28,7 @@ module cert_merge (
   input  wire        tlast_s2,
   input  wire [15:0] tuser_s2,
 
-  // AXI-Stream master (to eth_reframe)
+  // AXI-Stream master
   output wire        tvalid_m,
   input  wire        tready_m,
   output wire [31:0] tdata_m,

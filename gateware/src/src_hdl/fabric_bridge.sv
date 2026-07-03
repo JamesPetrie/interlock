@@ -361,7 +361,7 @@ module fabric_bridge
     .overall       (rsp_ovr_digest)
   );
 
-  // request pipeline certificate -> cert_merge
+  // combined certificate -> axis_mux3
   wire        c_tvalid, c_tready, c_tlast;
   wire [31:0] c_tdata;
   wire [3:0]  c_tkeep;
@@ -378,13 +378,13 @@ module fabric_bridge
     .c_keep (c_tkeep), .c_last (c_tlast), .c_user (c_tuser)
   );
 
-  // cert_merge -> response reframe
+  // axis_mux3 -> response reframe
   wire        mrg_tvalid, mrg_tready, mrg_tlast;
   wire [31:0] mrg_tdata;
   wire [3:0]  mrg_tkeep;
   wire [15:0] mrg_tuser;
 
-  cert_merge u_cert_merge (
+  axis_mux3 u_cert_merge (
     .clk       (clk),
     .rst_n     (rst_n),
     .tvalid_s0 (rsp_tvalid_o),
