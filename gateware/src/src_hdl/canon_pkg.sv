@@ -30,7 +30,7 @@ package canon_pkg;
   localparam int unsigned CANON_RSP_RSVD_W  =  384;
 
 
-  localparam int unsigned CANON_TOK_BYTES   =    4;
+  localparam int unsigned CANON_TOK_BYTES   =    2;
 
 
   // ---- scalar field types ----

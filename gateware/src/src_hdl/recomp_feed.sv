@@ -1,9 +1,11 @@
 // recomp_feed — recomputation dataplane (see docs/recomp_feed.md).
 //
-// FIRST VERSION — forwarding + token-feeding loop only. Estimate *contents*
-// are not processed yet: normalization, surprisal, and the Û accumulator are
-// deferred (docs/recomp_feed.md "Scoring" is a TODO). The estimate port is
-// consumed and its packet boundaries used purely to pace the loop.
+// Forwarding, the token-feeding loop, and estimate scoring: each frame is
+// normalization-checked (norm_chk), the actual value's probability is picked
+// out of the stream (the catch-all as the fallback, PROB_MIN on a
+// normalization failure), converted to a surprisal (log2_iter) and
+// accumulated into Û, which is dispatched on u_out at the end of the
+// challenge.
 //
 // Packet port (from batch_buffer): canonical packets, tuser = total byte
 // length @ beat #0. Every packet is forwarded verbatim toward the enclosure
@@ -23,13 +25,28 @@
 // the buffer is exhausted, then waits for the terminal (EOS) estimate and
 // dispatches Û.
 //
-// Estimate pacing: at most one estimate is held un-consumed. The estimate port
-// is back-pressured (tready_e = !est_seen) while a completed estimate awaits a
-// consumer, so the upstream MAC FIFO holds the rest — no counter, no loss even
-// when estimates arrive during CAP.
+// Estimate pacing: the estimate port is consumed only in the estimate states
+// (LEN_EST / TIME_EST / TOK_EST) — one beat per cycle, a frame ends at tlast —
+// and back-pressured everywhere else, so the upstream MAC FIFO holds whatever
+// arrives early (e.g. during CAP). Entries ride as (value, probability) word
+// pairs — value words raw (tokens verbatim, numeric values big-endian),
+// probability = every odd word, big-endian.
+//
+// Scoring: during a frame every probability streams through norm_chk while
+// the actual value's probability is latched (first value match wins; the
+// catch-all — the tlast pair — is the fallback). Entry #0 of a token
+// estimate is the EOS entry, identified by position: skipped for matching
+// on non-terminal frames, and the scored entry on the terminal frame (the
+// response ending has no token value to compare). At frame end a small
+// scorer FSM waits out norm_chk, picks the latched probability (PROB_MIN on
+// a normalization failure), owns the norm clear,
+// runs log2_iter, and accumulates Û -= log2(p). The next frame is held off
+// (tready_e) until the scorer is idle; token reveals overlap freely since
+// everything the scorer needs is latched before the frame ends.
 
 module recomp_feed
   import canon_pkg::*;
+  import recomp_pkg::*;
 (
   input  wire        clk,
   input  wire        rst_n,
@@ -56,7 +73,11 @@ module recomp_feed
   output wire        tready_e,
   input  wire [31:0] tdata_e,
   input  wire [3:0]  tkeep_e,
-  input  wire        tlast_e
+  input  wire        tlast_e,
+
+  // Entropy result dispatch
+  output wire        u_out_valid,
+  output wire [63:0] u_out
 );
 
   // ------------------------------------------------------------------
@@ -99,16 +120,32 @@ module recomp_feed
   logic [8*CANON_TOK_BYTES-1:0] tok_mem [0:TOK_MAX-1];
   logic [1:0]  byte_i;        // byte within the held payload beat
   logic [1:0]  tok_i;         // byte within the token being assembled
-  logic [23:0] tok_buf;       // token bytes assembled so far (byte 0 first)
+  // token bytes assembled so far (byte 0 first); the completing byte goes
+  // straight into the RAM write, so only CANON_TOK_BYTES-1 bytes stage here
+  logic [8*(CANON_TOK_BYTES-1)-1:0] tok_buf;
   logic [15:0] wr_tok;        // next token entry to write
   tok_addr_t   idx;           // reveal position
-  logic        est_seen;      // one completed estimate awaits a consumer
+  logic        est_phase;     // estimate word parity: 0 = value, 1 = probability
+
+  typedef enum logic [1:0] {
+    SC_IDLE,        // wait for a frame to complete
+    SC_WAIT_NORM,   // wait out norm_chk, pick p, clear norm, start log2
+    SC_WAIT_LOG     // wait for log2_iter, accumulate Û
+  } sc_state_t;
+  sc_state_t sc_state;
+
+  logic        est_first;     // inside the frame's first beat
+  logic        val_hit_q;     // previous estimate word matched the actual value
+  logic        p_latched;     // any probability latched (match or catch-all)
+  logic [31:0] p_score;       // that probability, numeric (byte-swapped) form
+  log2_acc_t   u_acc;         // Û accumulator, Q.LOG2_FRAC_W
 
   // parse the captured header. the payload holds tok_total = PLD_LEN /
   // CANON_TOK_BYTES tokens; the other fields (bucket, id/bucket-difference)
   // are for the scoring stage.
   wire canon_rsp_hdr_t resp_hdr  = canon_rsp_hdr_from_wire_bits(hdr_bits);
   wire tok_addr_t      tok_total = tok_addr_t'(resp_hdr.pld_len / CANON_TOK_BYTES);
+  wire canon_bkt_t     bkt_diff  = canon_bkt_t'(resp_hdr.reserved0);
 
   // ------------------------------------------------------------------
   // Combinational port control
@@ -118,15 +155,72 @@ module recomp_feed
   wire emit_tok  = (state == EMIT);
   wire beat_zero = (tdata_s == 32'h0);
 
-  wire       tok_last = (tok_i == 2'(CANON_TOK_BYTES-1));
+  wire tok_last  = (tok_i == 2'(CANON_TOK_BYTES-1));
 
-  // estimate port: accept one estimate, then back-pressure until it is consumed
-  // (the MAC FIFO holds the rest). set/consume are mutually exclusive.
-  assign tready_e = !est_seen;
-  // v1 does not process estimate contents or the non-length header fields
-  // until scoring lands ("Scoring" TODO)
-  wire _unused = &{1'b0, tdata_e, tkeep_e,
-                   resp_hdr.bucket, resp_hdr.id, resp_hdr.reserved0};
+  function automatic logic [31:0] bswap32(input logic [31:0] w);
+    return {w[7:0], w[15:8], w[23:16], w[31:24]};
+  endfunction
+
+  // estimate port: consumed only in the estimate states, one beat per cycle,
+  // held off while the scorer still works on the previous frame;
+  // back-pressured elsewhere (the MAC FIFO holds early arrivals)
+  // (explicit equality — Icarus does not support "inside" expressions)
+  wire in_est = (state == LEN_EST) || (state == TIME_EST) || (state == TOK_EST);
+  assign tready_e = in_est && (sc_state == SC_IDLE);
+  wire est_fire = tvalid_e && tready_e;
+  wire est_done = est_fire && tlast_e;   // current estimate frame complete
+
+  // the actual value for the current estimate, in raw wire-byte form: tokens
+  // compare verbatim, numeric values ride big-endian (hence the swap).
+  // REVISIT LENGTH/TIMING value encodings (doc open items).
+  wire [31:0] cur_tok = 32'(tok_mem[idx]);
+  // TODO should not need swap here
+  wire [31:0] act_val = (state == LEN_EST)  ? bswap32(32'(tok_total))
+                      : (state == TIME_EST) ? bswap32(32'(bkt_diff))
+                      :                       cur_tok;
+
+  // entry #0 of every token estimate is the EOS entry, identified by
+  // position: excluded from value matching on non-terminal frames.
+  wire act_eos = (state == TOK_EST) && (idx == tok_total); // Current actual is EOS, (position N+1, idx = N)
+  wire est_eos = (state == TOK_EST) && est_first;          // Current estimate pair is EOS
+
+  // normalization check: each frame's probabilities accumulate
+  wire        norm_fail, norm_busy;
+  // final sampling of the probablity (clears norm_chk)
+  wire        sc_read = (sc_state == SC_WAIT_NORM) && !norm_busy;
+
+  norm_chk u_norm (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .clr      (sc_read),
+    .add      (est_fire && (est_phase || tlast_e)),
+    .catchall (tlast_e),
+    .p        (bswap32(tdata_e)),   // TODO should not need swap here
+    .fail     (norm_fail),
+    .busy     (norm_busy)
+  );
+
+  wire [31:0] sc_p    = norm_fail ? PROB_MIN : p_score;
+  wire        log_done;
+  log2_t      log_res;
+
+  log2_iter u_log2 (
+    .clk   (clk),
+    .rst_n (rst_n),
+    .start (sc_read),
+    .p     (sc_p),
+    .done  (log_done),
+    .res   (log_res)
+  );
+
+  // Û dispatch: u_out shows the final accumulator for exactly the cycle
+  // DISPATCH exits (the last frame's scoring has landed, the clear follows)
+  assign u_out_valid = (state == DISPATCH) && (sc_state == SC_IDLE);
+  assign u_out       = 64'(u_acc);
+
+  // the non-length header fields beyond the timing word wait for the scoring
+  // encodings to be pinned
+  wire _unused = &{1'b0, tkeep_e, resp_hdr.bucket, resp_hdr.id};
 
   // packet port ready: gated by the master when forwarding; while capturing,
   // header beats go full rate and a payload beat completes when its last
@@ -140,7 +234,7 @@ module recomp_feed
   // master port: forwarded packet passthrough, or a one-beat token reveal
   wire fwd_beat = fwd && tvalid_s;
   assign tvalid_m = fwd_beat || emit_tok;
-  assign tdata_m  = fwd ? tdata_s : 32'(tok_mem[idx]); // TODO add idx to the token frame
+  assign tdata_m  = fwd ? tdata_s : cur_tok; // TODO add idx to the token frame
   assign tkeep_m  = fwd ? tkeep_s : TOK_KEEP;
   assign tlast_m  = fwd ? tlast_s : 1'b1;
   assign tuser_m  = (fwd && bcnt == 16'h0) ? tuser_s
@@ -162,7 +256,13 @@ module recomp_feed
       tok_buf    <= '0;
       wr_tok     <= '0;
       idx        <= '0;
-      est_seen   <= 1'b0;
+      est_phase  <= 1'b0;
+      sc_state   <= SC_IDLE;
+      est_first  <= 1'b1;
+      val_hit_q  <= 1'b0;
+      p_latched  <= 1'b0;
+      p_score    <= '0;
+      u_acc      <= '0;
     end else begin
       case (state)
         // ---- forward verbatim; an all-zero header packet is the CTRL
@@ -174,7 +274,9 @@ module recomp_feed
           end else begin
             bcnt     <= '0;
             all_zero <= 1'b1;                    // reset for the next packet
-            if (all_zero && beat_zero) state <= CAP;
+            if (all_zero && beat_zero) begin     // next packet is the challenged response
+              state <= CAP;
+            end
           end
         end
 
@@ -213,21 +315,18 @@ module recomp_feed
         end
 
         // ---- initial estimates: length, then timing ----
-        LEN_EST: if (est_seen) begin
-          est_seen <= 1'b0;
-          state    <= TIME_EST;
+        LEN_EST: if (est_done) begin
+          state <= TIME_EST;
         end
 
-        TIME_EST: if (est_seen) begin
-          est_seen <= 1'b0;
-          state    <= TOK_EST;
+        TIME_EST: if (est_done) begin
+          state <= TOK_EST;
         end
 
         // ---- one estimate → reveal the next token, or finish once the buffer
         //      is exhausted (the terminal EOS estimate is consumed here too) ----
-        TOK_EST: if (est_seen) begin
-          est_seen <= 1'b0;
-          state    <= state_t'(
+        TOK_EST: if (est_done) begin
+          state <= state_t'(
                       (idx             == tok_total)    ? DISPATCH :  // (non-full packet) received estimate even for token N+1 (EOS)
                       (idx             <  tok_total-1)  ? EMIT :      // not received estimate for token N yet (Note: total-1 underflows on empty payload packets)
                       (int'(tok_total) != TOK_MAX)      ? EMIT :      // non-full packet and not yet received estimate for token N+1 (EOS)
@@ -240,18 +339,57 @@ module recomp_feed
           state <= TOK_EST;
         end
 
-        // ---- feeding complete → dispatch Û, then idle ----
-        DISPATCH: begin
-          // TODO dispatch the accumulated Û once scoring lands
+        // ---- feeding complete: wait out the final frame's scoring, then
+        //      dispatch Û and idle ----
+        DISPATCH: if (u_out_valid) begin
+          u_acc <= '0;
           state <= FWD;
         end
 
         default: state <= FWD;
       endcase
 
-      // one estimate outstanding: set here on completion; each waiting state
-      // above clears it (mutually exclusive — tready_e is low while est_seen)
-      if (tvalid_e && tready_e && tlast_e) est_seen <= 1'b1;
+      // estimate first flag, word parity (value/probability alternate),
+      // value hit flag and score latch
+      if (est_fire) begin
+        est_first <= tlast_e ? 1'b1 : 1'b0;
+        est_phase <= tlast_e ? 1'b0 : !est_phase;
+
+        // Capture if the value of the next estimate matches the actual token value
+        if (!est_phase) begin
+          // (the EOS entry matches positionally only — never by value)
+          val_hit_q <= (!act_eos && !est_eos) ? (act_val == tdata_e)
+                                              : (act_eos == est_eos);
+        end else begin
+          val_hit_q <= 1'b0;
+        end
+
+        // latch on a hit or catch-all, avoid latching multiple times
+        if ((val_hit_q || tlast_e) && !p_latched) begin
+          p_score   <= bswap32(tdata_e); // TODO should not need swap here
+          p_latched <= 1'b1;
+        end
+      end
+
+      // scorer: one estimate at a time — tready_e holds the next frame off
+      // until the accumulate completes, so the latches above cannot be
+      // overwritten mid-score
+      case (sc_state)
+        SC_IDLE: if (est_done) begin
+          // Normalization already runnin at this point, wait for it to finish
+          sc_state <= SC_WAIT_NORM;
+        end
+        SC_WAIT_NORM: if (!norm_busy) begin
+          // Logarithm is automatically triggered by normalize completion, wait for it to finish
+          sc_state <= SC_WAIT_LOG;
+        end
+        SC_WAIT_LOG:  if (log_done) begin
+          u_acc     <= u_acc - log2_acc_t'(log_res);  // accumulate -log2(p)
+          p_latched <= 1'b0;
+          sc_state  <= SC_IDLE;
+        end
+        default: sc_state <= SC_IDLE;
+      endcase
     end
   end
 

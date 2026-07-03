@@ -18,14 +18,14 @@ the running total `Û`, and hands off the result.
          Û ◀─────────── │  final response:                      │ ◀─────────── AXIS est
                         │   START ─▶ len,timing,tok_0 estimates │
                         │   loop: reveal tok_i ─▶ tok_i+1 est.  │
-                        │   CLOSE                               │
+                        │                                       │
                         │                                       │
                         └───────────────────────────────────────┘
 ```
 
 ## Forwarding
 
-All packets except the challenged response are forwarded as-is. The challenged response is preceded by a CTRL packet indicating the start of the recomputation.
+All packets except the challenged response are forwarded as-is. The challenged response is preceded by a CTRL packet (an all-zero canonical header, no payload) indicating the start of the recomputation.
 
 The challenged response however is captured into a buffer and fed to the recomputation cluster token-by-token:
 1. Before feeding any tokens from the buffer, a CTRL packet is sent which triggers 3 estimation responses: length, timing and token_0.
@@ -38,7 +38,7 @@ The challenged response however is captured into a buffer and fed to the recompu
 
 ## Timing estimate
 
-The timing estimate predicts the bucket difference between the challenged response and the corresponding request. The original bucket numbers might be overridden in the packet headers, in which case the original difference must be supplied in the response packet's header (e.g. replacing the ID value).
+The timing estimate predicts the bucket difference between the challenged response and the corresponding request. The original bucket numbers might be overridden in the packet headers, in which case the original difference must be supplied in the response packet's header (the low word of the RESERVED field).
 
 ## Frame formats
 
@@ -67,12 +67,20 @@ There is a tradeoff between using raw probabilities p vs surprisals log(p) on th
 
 1. **Normalization check.** The estimate must describe a valid
    sub-distribution — its total mass (candidates plus the catch-all) is
-   `≤ 1`. This stops the compute from assigning full weight to everything and
-   scoring nothing. On **failure** the estimate is **dropped** and the
-   position is charged the **maximum entropy** of its value space (uniform
-   over all values — e.g. the full token width for a `TOKEN`). No fault, no
-   abort: a malformed estimate costs the prover a full-entropy position and
-   the loop continues.
+   `≤ 1`. The catch-all is a *per-value* probability, so its mass is charged
+   at `p × 2^W` (`W` = the value-space width in bits): in the exponent-based
+   float this is pure exponent arithmetic, no multiplier. (REVISIT: `2^W` is
+   an upper bound for the exact `2^W − K` unlisted values — sound, never
+   under-counts, over-counts by `≤ K/2^W ≈ 4e-8`; an exact count would need
+   a multiplier.) This stops the compute from assigning full weight to
+   everything and scoring nothing. On **failure** the estimate is
+   **dropped** and the position is charged `PROB_MIN`, the smallest
+   representable probability — at least the value space's max entropy, so a
+   malformed estimate never under-charges. No fault, no abort: the loop
+   continues. A frame ending on a dangling value word (odd word count) is
+   handled uniformly: that word is treated as a bare catch-all probability —
+   normalized at `× 2^W` and scored as the fallback — so a truncated frame
+   cannot dodge its charge either.
 
 2. **Accumulate.** Take the probability the estimate assigns the **actual
    value** (the catch-all's probability if that value is not explicitly
