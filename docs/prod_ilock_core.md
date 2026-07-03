@@ -10,7 +10,7 @@ Request direction                              outside region   inside region
                                                               │
         ┌──────────┐  ┌────────────┐    ┌────────────┐  ┌───── ─────┐  ┌────────────┐  ┌──────────┐
 MAC ──▶ │   eth    │─▶│ canon proc │───▶│   traffic  │─▶│  buc│ket  │─▶│  2×1 mux   │─▶│   eth    │──▶ MAC
-FIFO    │ deframe  │  │ (int drop) │    │   commit   │  │  buf fer  │  │            │  │ reframe  │    FIFO
+FIFO    │ deframe  │  │ + drop*    │    │   commit   │  │  buf fer  │  │            │  │ reframe  │    FIFO
         └──────────┘  └─────┬─┬────┘    └──────┬─────┘  └─────│─────┘  └────────────┘  └──────────┘
 tuser:          drop@tlast  │ │   len@beat#0   │   len@beat#0                ▲    len@beat#0
                             │ │   swap(inline) │ swap(inline) │              │
@@ -26,9 +26,11 @@ Response direction          │         │        │ digest                   
                             ▼         │        │              │              │
         ┌──────────┐  ┌────────────┐◀─┘ ┌──────┴─────┐  ┌───────────┐  ┌─────┴──────┐  ┌──────────┐
 MAC ◀── │   eth    │◀─│  3×1 mux   │◀───│   traffic  │◀─│  buc│ket  │◀─│ canon proc │◀─│   eth    │◀── MAC
-FIFO    │ reframe  │  │            │    │   commit   │  │  buf fer  │  │ (ext drop) │  │ deframe  │    FIFO
+FIFO    │ reframe  │  │            │    │   commit   │  │  buf fer  │  │            │  │ deframe  │    FIFO
         └──────────┘  └────────────┘    └────────────┘  └─────│─────┘  └────────────┘  └──────────┘
 tuser:           len@beat#0       len@beat#0       len@beat#0      len@beat#0     drop@tlast
                                                  swap(inline) │    drop@tlast
                                                                   swap(inline)
+
+* drop: a separate axis_pkt_gate after canon proc
 ```

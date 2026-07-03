@@ -147,12 +147,12 @@ module fabric_bridge
   );
 
   // ====================================================================
-  // Requests: canon_proc -> traffic_commit
+  // Requests: canon_proc -> pkt gate
   // ====================================================================
-  wire         req_tvalid_cp2tc, req_tready_cp2tc, req_tlast_cp2tc;
-  wire [31:0]  req_tdata_cp2tc;
-  wire [3:0]   req_tkeep_cp2tc;
-  wire [15:0]  req_tuser_cp2tc;
+  wire         req_tvalid_cp2pg, req_tready_cp2pg, req_tlast_cp2pg;
+  wire [31:0]  req_tdata_cp2pg;
+  wire [3:0]   req_tkeep_cp2pg;
+  wire [15:0]  req_tuser_cp2pg;
   wire [127:0] cert_nonce; // TODO add width localparam
 
   canon_proc #(
@@ -166,12 +166,12 @@ module fabric_bridge
     .tkeep_s  (req_tkeep_i),
     .tlast_s  (req_tlast_i),
     .tuser_s  (req_tuser_i),
-    .tvalid_m (req_tvalid_cp2tc),
-    .tready_m (req_tready_cp2tc),
-    .tdata_m  (req_tdata_cp2tc),
-    .tkeep_m  (req_tkeep_cp2tc),
-    .tlast_m  (req_tlast_cp2tc),
-    .tuser_m  (req_tuser_cp2tc),
+    .tvalid_m (req_tvalid_cp2pg),
+    .tready_m (req_tready_cp2pg),
+    .tdata_m  (req_tdata_cp2pg),
+    .tkeep_m  (req_tkeep_cp2pg),
+    .tlast_m  (req_tlast_cp2pg),
+    .tuser_m  (req_tuser_cp2pg),
     .nonce    (cert_nonce),
     // sync toward the client (spliced into the response egress mux)
     .tvalid_sync (sync_req_tvalid),
@@ -182,6 +182,31 @@ module fabric_bridge
     .tuser_sync  (sync_req_tuser),
     .tick     (tick),
     .timer    (timer)
+  );
+
+  // ====================================================================
+  // Requests: pkt gate -> traffic_commit
+  // ====================================================================
+  wire         req_tvalid_pg2tc, req_tready_pg2tc, req_tlast_pg2tc;
+  wire [31:0]  req_tdata_pg2tc;
+  wire [3:0]   req_tkeep_pg2tc;
+  wire [15:0]  req_tuser_pg2tc;
+
+  axis_pkt_gate drop_gate_req (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .tvalid_s (req_tvalid_cp2pg),
+    .tready_s (req_tready_cp2pg),
+    .tdata_s  (req_tdata_cp2pg),
+    .tkeep_s  (req_tkeep_cp2pg),
+    .tlast_s  (req_tlast_cp2pg),
+    .tuser_s  (req_tuser_cp2pg),
+    .tvalid_m (req_tvalid_pg2tc),
+    .tready_m (req_tready_pg2tc),
+    .tdata_m  (req_tdata_pg2tc),
+    .tkeep_m  (req_tkeep_pg2tc),
+    .tlast_m  (req_tlast_pg2tc),
+    .tuser_m  (req_tuser_pg2tc)
   );
 
   // ====================================================================
@@ -201,12 +226,12 @@ module fabric_bridge
   ) commit_req (
     .clk      (clk),
     .rst_n    (rst_n),
-    .tvalid_s (req_tvalid_cp2tc),
-    .tready_s (req_tready_cp2tc),
-    .tdata_s  (req_tdata_cp2tc),
-    .tkeep_s  (req_tkeep_cp2tc),
-    .tlast_s  (req_tlast_cp2tc),
-    .tuser_s  (req_tuser_cp2tc),
+    .tvalid_s (req_tvalid_pg2tc),
+    .tready_s (req_tready_pg2tc),
+    .tdata_s  (req_tdata_pg2tc),
+    .tkeep_s  (req_tkeep_pg2tc),
+    .tlast_s  (req_tlast_pg2tc),
+    .tuser_s  (req_tuser_pg2tc),
     .tvalid_m (req_tvalid_tc2bb),
     .tready_m (req_tready_tc2bb),
     .tdata_m  (req_tdata_tc2bb),
@@ -223,6 +248,7 @@ module fabric_bridge
   wire [15:0]  req_tuser_o;
 
   batch_buffer #(
+    .GRACE_PERIOD(2000), // increased for the additional drop gate
     .OUTPUT_SWAP(0)
   ) buffer_req (
     .clk      (clk),
