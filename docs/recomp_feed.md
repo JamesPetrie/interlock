@@ -25,7 +25,7 @@ the running total `Û`, and hands off the result.
 
 ## Forwarding
 
-All packets except the challenged response are forwarded as-is. The challenged response is preceded by a CTRL packet (an all-zero canonical header, no payload) indicating the start of the recomputation.
+All packets except the challenged response are forwarded as-is. The challenged response is preceded by a CTRL packet (`ID = 0`, no payload) indicating the start of the recomputation.
 
 The challenged response however is captured into a buffer and fed to the recomputation cluster token-by-token:
 1. Before feeding any tokens from the buffer, a CTRL packet is sent which triggers 3 estimation responses: length, timing and token_0.

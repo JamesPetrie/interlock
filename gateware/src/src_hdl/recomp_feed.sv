@@ -10,9 +10,10 @@
 // Packet port (from batch_buffer): canonical packets, tuser = total byte
 // length @ beat #0. Every packet is forwarded verbatim toward the enclosure
 // (eth_reframe) EXCEPT the challenged response, which is preceded in the
-// stream by a CTRL packet — an all-zero header, no payload. The CTRL packet
-// is itself forwarded (it is the recomputation START trigger) and arms the
-// capture of the packet that follows.
+// stream by a CTRL packet — ID = 0, the current bucket in BUCKET, no
+// payload. The CTRL packet is itself forwarded (it is the recomputation
+// START trigger) and arms the capture of the packet that follows. The
+// staging contract keeps other ID = 0 packets out of the slice.
 //
 // The captured response is not forwarded: its header lands in a register
 // (parsed for PLD_LEN → tok_total; bucket and id/bucket-difference for the
@@ -76,7 +77,8 @@ module recomp_feed
   input  wire        tlast_e,
 
   // Entropy result dispatch
-  output wire        u_out_valid,
+  output wire        out_valid,
+  output wire [63:0] id_out,
   output wire [63:0] u_out
 );
 
@@ -109,14 +111,13 @@ module recomp_feed
   state_t state;
 
   logic [15:0] bcnt;          // beat index = word address within the packet
-  logic        all_zero;      // header seen so far is all-zero (CTRL marker)
 
   // captured response, split: the header in a register (it must be sliceable
-  // for parsing — and for CANON_TOK_BYTES = 3 it would not even align to RAM
-  // entries), the payload in a token-wide RAM (one write + one read port,
+  // for parsing), the payload in a token-wide RAM (one write + one read port,
   // BRAM-inferable). payload bytes stream one per cycle into the token
   // assembler in CAP, so a token straddling a beat boundary costs nothing.
-  canon_rsp_hdr_bits_t          hdr_bits;              // wire-order header copy
+  // Note: header storage is reused to detect the CTRL packet
+  canon_rsp_hdr_bits_t          hdr_bits;
   logic [8*CANON_TOK_BYTES-1:0] tok_mem [0:TOK_MAX-1];
   logic [1:0]  byte_i;        // byte within the held payload beat
   logic [1:0]  tok_i;         // byte within the token being assembled
@@ -153,7 +154,6 @@ module recomp_feed
   wire fwd       = (state == FWD);
   wire cap       = (state == CAP);
   wire emit_tok  = (state == EMIT);
-  wire beat_zero = (tdata_s == 32'h0);
 
   wire tok_last  = (tok_i == 2'(CANON_TOK_BYTES-1));
 
@@ -215,8 +215,9 @@ module recomp_feed
 
   // Û dispatch: u_out shows the final accumulator for exactly the cycle
   // DISPATCH exits (the last frame's scoring has landed, the clear follows)
-  assign u_out_valid = (state == DISPATCH) && (sc_state == SC_IDLE);
-  assign u_out       = 64'(u_acc);
+  assign out_valid = (state == DISPATCH) && (sc_state == SC_IDLE);
+  assign id_out    = resp_hdr.id;
+  assign u_out     = 64'(u_acc);
 
   // the non-length header fields beyond the timing word wait for the scoring
   // encodings to be pinned
@@ -249,7 +250,6 @@ module recomp_feed
     if (!rst_n) begin
       state      <= FWD;
       bcnt       <= '0;
-      all_zero   <= 1'b1;
       hdr_bits   <= '0;
       byte_i     <= '0;
       tok_i      <= '0;
@@ -264,29 +264,30 @@ module recomp_feed
       p_score    <= '0;
       u_acc      <= '0;
     end else begin
+
+      // shared header capture: every received packet's header is parsed
+      if (in_fire && (bcnt < 16'(HDR_BEATS)))
+        hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
+
       case (state)
-        // ---- forward verbatim; an all-zero header packet is the CTRL
-        //      marker (forwarded as START), arming the capture ----
+        // ---- forward verbatim; a CTRL marker arms the capture. ----
         FWD: if (in_fire) begin
           if (!tlast_s) begin
-            all_zero <= all_zero && beat_zero;
-            bcnt     <= bcnt + 16'h1;
+            bcnt <= bcnt + 16'h1;
           end else begin
-            bcnt     <= '0;
-            all_zero <= 1'b1;                    // reset for the next packet
-            if (all_zero && beat_zero) begin     // next packet is the challenged response
-              state <= CAP;
+            bcnt <= '0;
+            // CTRL marker: parsed ID = 0, and the packet must span a full
+            // header — anything shorter leaves a stale id view in hdr_bits
+            if ((resp_hdr.id == '0) && (bcnt >= 16'(HDR_BEATS - 1))) begin
+              state <= CAP;                      // next packet is the response
             end
           end
         end
 
-        // ---- capture: header beats into the register at full rate; payload
-        //      bytes stream one per cycle into tok_buf, each completed token
-        //      written to the RAM ----
+        // ---- capture: payload bytes stream one per cycle into tok_buf,
+        //      each completed token written to the RAM ----
         CAP: if (tvalid_s) begin
-          if (bcnt < 16'(HDR_BEATS)) begin
-            hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
-          end else begin
+          if (bcnt >= 16'(HDR_BEATS)) begin
             // Processing tokens 1 byte at a time (tready pulled low meanwhile)
             // Write to the memory only when a full token is ready
             if (!tok_last) begin
@@ -341,7 +342,7 @@ module recomp_feed
 
         // ---- feeding complete: wait out the final frame's scoring, then
         //      dispatch Û and idle ----
-        DISPATCH: if (u_out_valid) begin
+        DISPATCH: if (out_valid) begin
           u_acc <= '0;
           state <= FWD;
         end

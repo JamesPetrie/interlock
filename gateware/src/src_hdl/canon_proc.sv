@@ -32,7 +32,9 @@ module canon_proc
 #(
   // Selects the canonical-header struct *type* parsed in this direction
   // (see the g_canon generate block).
-  parameter canon_dir_t DIR = CANON_DIR_REQ
+  parameter canon_dir_t DIR = CANON_DIR_REQ,
+  // Content checks enable. Integrity checks are always stay on.
+  parameter bit CHK_CONTENT = 1'b1
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -74,6 +76,7 @@ module canon_proc
   // ------------------------------------------------------------------
   // Geometry
   // ------------------------------------------------------------------
+  // TODO fix header width across the directions so recomp path can handle uniformly
   localparam int unsigned HDR_BITS  = (DIR == CANON_DIR_RSP) ? CANON_RSP_HDR_BITS
                                                              : CANON_REQ_HDR_BITS;
   localparam int unsigned HDR_BYTES = HDR_BITS / 8;
@@ -179,7 +182,6 @@ module canon_proc
   wire hdr_pld_rem_chk = !hdr_id.inf || (hdr_pld_len % canon_len_t'(CANON_TOK_BYTES)) == '0;
   // bucket check
   wire hdr_bkt_chk = (hdr_bkt == curr_bkt);
-  // TODO hdr_bkt_chk
   // ID value validity check
   wire hdr_id_valid_chk  = (hdr_id.id_cont != '0);
   // ID sequence check
@@ -192,14 +194,19 @@ module canon_proc
   wire hdr_rsvd_chk = hdr_rsvd_clr;
 
 
-  wire hdr_chk =    hdr_fract_chk
-                 && hdr_pld_len_chk
-                 && hdr_pld_rem_chk
-                 && hdr_bkt_chk
-                 && hdr_id_valid_chk
-                 && hdr_id_seq_chk
-                 && hdr_ref_chk
-                 && hdr_rsvd_chk;
+  // content rules, disabled wholesale on the recomp ingress
+  wire hdr_content_chk = !CHK_CONTENT
+                      || (
+                             hdr_id_valid_chk
+                          && hdr_id_seq_chk
+                          && hdr_ref_chk
+                          && hdr_rsvd_chk);
+
+  wire hdr_chk =    hdr_fract_chk       // integrity: full header
+                 && hdr_pld_len_chk     // integrity: buffer sizing
+                 && hdr_pld_rem_chk     // integrity: token alignment
+                 && hdr_bkt_chk         // integrity: timing isolation
+                 && hdr_content_chk;
 
   wire canon_len_t total = canon_len_t'(HDR_BYTES) + hdr_pld_len;
 

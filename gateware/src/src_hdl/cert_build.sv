@@ -13,6 +13,14 @@
 // The reserved zero header (HDR_BYTES, its leading id = 0) flags the frame as a
 // certificate to the receiver. The block latches one overall digest (with its
 // metadata) on an in_valid pulse and is busy ~one HMAC until the frame drains.
+//
+// RSP_SYNC selects the rsp input's pairing. 1 (prod): rsp is synchronous —
+// a certificate needs both digests, one rsp per cert. 0 (recomp core): rsp
+// is asynchronous — a free-running sample latched whenever its valid pulses
+// (like the nonce), never gating emission; certificates follow the req
+// digest's cadence alone and carry the last-sampled value (zero before the
+// first sample, stale after — pairing/validity semantics are the protocol
+// layer's to define).
 // It cannot back-pressure -- an overall arrives once per certificate period
 // (~1 s), vastly longer than that, so a pulse sink with no in_ready suffices.
 //
@@ -26,7 +34,8 @@ module cert_build
   parameter logic [31:0] VERSION      = 32'h0000_0006,
   parameter logic [31:0] INTERLOCK_ID = 32'h42,
   parameter int unsigned HDR_BYTES    = 64,                 // reserved cert-header length
-  parameter int unsigned NUM_BUCKETS  = 1000                // buckets per certificate
+  parameter int unsigned NUM_BUCKETS  = 1000,               // buckets per certificate
+  parameter bit          RSP_SYNC     = 1'b1                // 0: rsp sampled async, req drives emission
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -72,12 +81,14 @@ module cert_build
 
   logic [127:0] nonce_q;                  // this second's nonce, latched with the overalls
 
-  wire digests_valid = overall_req_valid && overall_rsp_valid;
+  wire digests_valid = overall_req_valid && (!RSP_SYNC || overall_rsp_valid);
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       overall_req_valid <= 1'b0;
+      overall_req       <= '0;
       overall_rsp_valid <= 1'b0;
+      overall_rsp       <= '0;
       nonce_q           <= '0;
     end else begin
       if (in_valid_req) begin
@@ -88,11 +99,15 @@ module cert_build
       if (in_valid_rsp) begin
         overall_rsp_valid <= 1'b1;
         overall_rsp       <= in_overall_rsp;
-        nonce_q           <= in_nonce; // also update the nonce if changed
+        if (RSP_SYNC) begin
+          nonce_q <= in_nonce; // also update the nonce if changed
+        end
       end
       if (digests_valid) begin
         overall_req_valid <= 1'b0;
-        overall_rsp_valid <= 1'b0;
+        if (RSP_SYNC) begin
+          overall_rsp_valid <= 1'b0;
+        end
       end
     end
   end
@@ -171,7 +186,7 @@ module cert_build
 
   assign c_valid = sf_ov;
   assign c_data  = sf_od;
-  assign c_keep  = 4'b1111;                        // frame is word-aligned (FRAME_BYTES % 4 == 0)
+  assign c_keep  = 4'b1111 >> (4-sf_ob);
   assign c_last  = sf_last;
   assign c_user  = (sf_ov && cuser_pend) ? 16'(FRAME_BYTES) : 16'h0;
 

@@ -13,6 +13,7 @@ package canon_pkg;
   typedef enum logic {
     CANON_DIR_REQ = 1'b0,
     CANON_DIR_RSP = 1'b1
+    // TODO add DIR_RECOMP instead of reusing DIR_REQ
   } canon_dir_t;
 
   // ---- format-level size bound ----
