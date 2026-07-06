@@ -6,6 +6,7 @@ import_files -hdl_source {./src/src_hdl/pkt_counter.sv}
 import_files -hdl_source {./src/src_hdl/sticky_bit.sv}
 import_files -hdl_source {./src/src_hdl/mdio_combiner.sv}
 import_files -hdl_source {./src/src_hdl/tse1_loopback.sv}
+import_files -hdl_source {./src/src_hdl/canon_pkg.sv}
 import_files -hdl_source {./src/src_hdl/fabric_bridge.sv}
 import_files -hdl_source {./src/src_hdl/eth_pkg.sv}
 import_files -hdl_source {./src/src_hdl/crc32_pkg.sv}
@@ -22,6 +23,9 @@ import_files -hdl_source {./src/src_hdl/serializer.sv}
 import_files -hdl_source {./src/src_hdl/traffic_commit.sv}
 import_files -hdl_source {./src/src_hdl/cert_build.sv}
 import_files -hdl_source {./src/src_hdl/axis_mux3.sv}
+import_files -hdl_source {./src/src_hdl/canon_proc.sv}
+import_files -hdl_source {./src/src_hdl/axis_pkt_gate.sv}
+import_files -hdl_source {./src/src_hdl/batch_buffer.sv}
 
 build_design_hierarchy
 

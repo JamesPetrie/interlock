@@ -32,11 +32,15 @@
 // drain reads the other (including on the swap cycle), so the storage maps
 // to a simple-dual-port BRAM with no address collisions.
 
-module batch_buffer #(
+module batch_buffer
+  // import is what makes the eth_pkg dependency visible to Libero's
+  // compile-order scanner; qualified references alone are not tracked
+  import eth_pkg::*;
+#(
   // Bank size in 32-bit words: gigabit line rate x batch period + one
   // max-packet carryover, with margin (see the doc's sizing section).
-  // Default 320 KB per bank (worst case ~300 KB at full 1 GbE).
-  parameter int unsigned BANK_WORDS    = 81920,
+  // Default 320 KB per bank (supports at most 2.5ms of full 1 GbE).
+  parameter int unsigned BANK_WORDS    = (320 * 1024) / 4,
   // Grace period (time for last writes to finish after the tick)
   // Max ~1.5KB packet with at least ~2B/cycle (hashing throughput)
   parameter int unsigned GRACE_PERIOD  = 1_000, // with safety margin
@@ -82,10 +86,16 @@ module batch_buffer #(
   typedef logic [ADDR_W-1:0] ptr_t;
 
   // ------------------------------------------------------------------
-  // Bank storage — two independent banks (bank index outer). Fill writes one
-  // bank, drain reads the other, so this infers a simple dual-port RAM.
+  // Bank storage — two independent banks. Fill writes one bank, drain reads
+  // the other, so each infers a simple dual-port RAM.
+  //
+  // Note: Kept as two 1-D arrays, the equivalent 2-D array with a variable bank
+  // index (mem[fill_sel][wr_ptr]) sends Synplify 2024.2's compiler into an
+  // unbounded analysis blowup at production BANK_WORDS (hangs c_ver at 100%
+  // CPU indefinitely; fine at toy sizes).
   // ------------------------------------------------------------------
-  logic [31:0] mem [0:1][0:BANK_WORDS-1];
+  logic [31:0] mem0 [0:BANK_WORDS-1];
+  logic [31:0] mem1 [0:BANK_WORDS-1];
 
   logic       fill_sel;  // always valid
   logic [1:0] drain_sel; // bit[1] is valid flag
@@ -183,7 +193,8 @@ module batch_buffer #(
           // inject the length prefix ahead of the packet's first word;
           // beat #0 waits out this cycle (tready_s low here)
           if (tvalid_s && !in_delimiter) begin
-            mem[fill_sel][wr_ptr] <= {16'h0, tuser_s};
+            if (fill_sel) mem1[wr_ptr] <= {16'h0, tuser_s};
+            else          mem0[wr_ptr] <= {16'h0, tuser_s};
             wr_ptr <= wr_ptr + ptr_t'(1);
             fstate <= F_DATA;
           end
@@ -191,7 +202,8 @@ module batch_buffer #(
 
         F_DATA: begin
           if (in_handshake) begin
-            mem[fill_sel][wr_ptr] <= tdata_s;
+            if (fill_sel) mem1[wr_ptr] <= tdata_s;
+            else          mem0[wr_ptr] <= tdata_s;
             wr_ptr <= wr_ptr + ptr_t'(1);
             if (tlast_s) begin
               // commit the record — or abandon it on the drop flag
@@ -221,7 +233,7 @@ module batch_buffer #(
 
         D_PFX_RD: begin
           // fetch the prefix word
-          rd_data <= drain_sel[1] ? mem[drain_sel[0]][rd_ptr] : '0; // TODO separate these from the FSM always
+          rd_data <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0; // TODO separate these from the FSM always
           rd_ptr  <= rd_ptr + ptr_t'(1);
           dstate  <= D_PFX_LD;
         end
@@ -233,7 +245,7 @@ module batch_buffer #(
           rd_rec_end <= rd_ptr + ptr_t'((rd_data[15:0] + 16'd3) >> 2);
           // fetch the first data word
           emit_first <= 1'b1;
-          rd_data    <= drain_sel[1] ? mem[drain_sel[0]][rd_ptr] : '0;
+          rd_data    <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0;
           rd_ptr     <= rd_ptr + ptr_t'(1);
           dstate     <= D_EMIT;
         end
@@ -251,7 +263,7 @@ module batch_buffer #(
                         : emit_last  ? {15'b0, batch_last}
                         :              16'h0;
             // fetch the next data (could also be new prefix)
-            rd_data    <= drain_sel[1] ? mem[drain_sel[0]][rd_ptr] : '0;
+            rd_data    <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0;
             rd_ptr     <= rd_ptr + ptr_t'(1);
 
             if (emit_last) begin

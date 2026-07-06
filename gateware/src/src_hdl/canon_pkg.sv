@@ -2,6 +2,11 @@
 
 package canon_pkg;
 
+  // Redundant with the qualified eth_pkg:: references below, but Libero's
+  // compile-order scanner only tracks import statements — without this,
+  // canon_pkg compiles before eth_pkg and synthesis fails.
+  import eth_pkg::*;
+
   // ---- pipeline direction ----
   // Selects which canonical header type a datapath block parses: requests
   // (client -> server) or responses (the reverse).

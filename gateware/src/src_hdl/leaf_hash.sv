@@ -35,7 +35,12 @@
 // digest and stays aligned at the join. A packet of exactly HDR_BYTES has an
 // empty payload run -> SHA256("").
 
-module leaf_hash #(
+module leaf_hash
+  // imports are what make the package dependencies visible to Libero's
+  // compile-order scanner; qualified references alone are not tracked
+  import eth_pkg::*;
+  import sha256_pkg::*;
+#(
   parameter int unsigned HDR_BYTES = 64       // canon_pkg::CANON_REQ_HDR_BYTES
 ) (
   input  wire        clk,

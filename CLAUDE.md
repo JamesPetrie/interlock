@@ -25,7 +25,7 @@ version — edit both when bumping.
 ## Build / iterate loop
 
 ```
-./build.sh         # ~22 min; logs to /tmp/build_*.log
+./build.sh         # ~1h; logs to /tmp/build_*.log
 ```
 
 The `.job` lands in `gateware/Libero_Project/designer/top/export/top.job`.
