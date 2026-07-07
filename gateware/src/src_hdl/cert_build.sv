@@ -6,7 +6,7 @@
 // core, and drives the certificate frame out a 32-bit AXI-Stream port:
 //
 //   m   = ( version, interlock_id, bucket_start, num_buckets, overall_req,
-//           overall_rsp, nonce )
+//           overall_rsp, nonce, prev_tau )
 //   tau = HMAC_k( m )
 //   frame = [ reserved canonical header (zeros) ] || m || tau
 //
@@ -58,6 +58,7 @@ module cert_build
     logic [255:0] overall_req;
     logic [255:0] overall_rsp;
     logic [127:0] nonce;
+    logic [255:0] prev_tau;
   } cert_msg_t;
 
   localparam int unsigned M_BYTES     = $bits(cert_msg_t) / 8;
@@ -98,8 +99,17 @@ module cert_build
 
   logic [31:0] bkt_start;
 
+  // Certificate chain: tau of the previous certificate, folded into the next
+  // m. Advances on EVERY h_done — including certs whose frame is dropped
+  // because u_ser_f still holds a wire-stalled one (late link-up) — so the
+  // verifier can reconstruct the dropped traffic-free certs and check them
+  // against the next delivered cert's prev_tau. Emission is best-effort,
+  // accounting is not (see docs/traffic_commit.md, Implementation status).
+  logic [255:0] prev_tau_q;
+
   // m assembled combinationally from the latched per-certificate values (the
-  // registered overalls + nonce, and bkt_start before its post-cert bump).
+  // registered overalls + nonce, and bkt_start/prev_tau_q before their
+  // post-cert bump).
   cert_msg_t m_reg;
   always_comb begin
     m_reg.version      = VERSION;
@@ -109,6 +119,7 @@ module cert_build
     m_reg.overall_req  = overall_req;
     m_reg.overall_rsp  = overall_rsp;
     m_reg.nonce        = nonce_q;
+    m_reg.prev_tau     = prev_tau_q;
   end
 
   logic cuser_pend;     // the frame's length rides its first beat
@@ -168,10 +179,12 @@ module cert_build
     if (!rst_n) begin
       bkt_start <= '0;
       cuser_pend <= 1'b0;
+      prev_tau_q <= '0; // TODO anchor certificate binding across power cycles (wait for first nonce?)
     end else begin
       if (h_done) begin
         cuser_pend <= 1'b1;
         bkt_start <= bkt_start + NUM_BUCKETS;
+        prev_tau_q <= tau;
       end else if (c_valid && c_ready) begin
         cuser_pend <= 1'b0;
       end

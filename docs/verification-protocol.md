@@ -127,17 +127,21 @@ Every second the interlock emits a certificate committing to the last 1000 bucke
 
 ```
       |127     96|95      64|63      32|31       0|
-      +----------+----------+---------------------+ 1024
+      +----------+----------+---------------------+ 1280
       | VERSION  |  DEVICE  | BKT_START| BKT_NUM  |
-      +----------+----------+---------------------+  896
+      +----------+----------+---------------------+ 1152
       |                   NONCE                   |
-      +---------------------+---------------------+  768
+      +---------------------+---------------------+ 1024
       |                                           |
-      +-                 INWARD                  -+  640
+      +-                 INWARD                  -+  896
+      |                                           |
+      +-------------------------------------------+  768
+      |                                           |
+      +-                 OUTWARD                 -+  640
       |                                           |
       +-------------------------------------------+  512
       |                                           |
-      +-                 OUTWARD                 -+  384
+      +-                  CHAIN                  -+  384
       |                                           |
       +-------------------------------------------+  256
       |                                           |
@@ -148,31 +152,36 @@ Every second the interlock emits a certificate committing to the last 1000 bucke
 
 ### Certificate message body (m)
 
-**VERSION, bits [1023:992]** \
+**VERSION, bits [1279:1248]** \
 Bind the certificate to the protocol version.
 
-**DEVICE, bits [991:960]** \
+**DEVICE, bits [1247:1216]** \
 Bind the certificate to the logging device.
 
-**BKT_START, bits [959:928]** \
+**BKT_START, bits [1215:1184]** \
 Index of the first time bucket in the certified interval. \
-Must be equal to the previous certificate's BKT_START + BKT_NUM.
+Must be equal to the previous *built* certificate's BKT_START + BKT_NUM.
 
-**BKT_NUM, bits [927:896]** \
+**BKT_NUM, bits [1183:1152]** \
 Number of buckets observed in the certified interval. \
 Fixed 1000 in the current version.
 
-**NONCE, bits [895:768]** \
+**NONCE, bits [1151:1024]** \
 Verifier supplied nonce for recency check.
 See [Nonce latch](#nonce-latch)
 
-**INWARD, bits [767:512]** \
+**INWARD, bits [1023:768]** \
 Cryptographic commitment to the input (request) traffic observed during the certificate interval. \
 See [Traffic commitment generation](#traffic-commitment-generation).
 
-**OUTWARD, bits [511:256]** \
+**OUTWARD, bits [767:512]** \
 Cryptographic commitment to the output (response) traffic observed during the certificate interval. \
 See [Traffic commitment generation](#traffic-commitment-generation).
+
+**CHAIN, bits [511:256]** \
+AUTH_TAG (τ) of the previous certificate the interlock *built*. \
+Advances on every built certificate, binding the certificate stream into a single chain. \
+See [Certificate authentication tag (τ)](#certificate-authentication-tag-τ).
 
 ### Certificate authentication tag (τ)
 
