@@ -294,8 +294,8 @@ sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {SSDetect} -hdl_f
 # project but unused.
 sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {tse1_loopback} -hdl_file {hdl\tse1_loopback.sv} -instance_name {tse1_loopback_0}
 
-# fabric_bridge — routes BOTH MAC directions through the fabric.
-sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {fabric_bridge} -hdl_file {hdl\fabric_bridge.sv} -instance_name {fabric_bridge_0}
+# recomp_ilock_core — routes BOTH MAC directions through the fabric.
+sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {recomp_ilock_core} -hdl_file {hdl\recomp_ilock_core.sv} -instance_name {core_0}
 
 
 
@@ -306,7 +306,7 @@ sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {fabric_bridge} -
 # =========================== Shared / common ============================
 sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:A" "CORESPI_0_0:PRESETN" "CoreUARTapb_0:PRESETN" "Core_reset_pf_0:FABRIC_RESET_N" "MIV_RV32_C0_0:RESETN" "PF_IOD_CDR_CCC_C0_0:ARST_N" "PHY_RST" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:B" "PF_IOD_CDR_CCC_C0_0:PLL_LOCK" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:Y" "CORETSE_0:PRESETN" "CORETSE_1:PRESETN" "PF_IOD_CDR_C0_0:RST_N" "PF_IOD_CDR_C1_0:RST_N" "SSDetect_0:rst_b" "SSDetect_1:rst_b" "pkt_counter_0:rst_n" "pkt_counter_1:rst_n" "sticky_bit_0:rst_n" "fabric_bridge_0:rst_n" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"AND2_2:Y" "CORETSE_0:PRESETN" "CORETSE_1:PRESETN" "PF_IOD_CDR_C0_0:RST_N" "PF_IOD_CDR_C1_0:RST_N" "SSDetect_0:rst_b" "SSDetect_1:rst_b" "pkt_counter_0:rst_n" "pkt_counter_1:rst_n" "sticky_bit_0:rst_n" "core_0:rst_n" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TCK" "TCK" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TDI" "TDI" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TDO" "TDO" }
@@ -317,7 +317,7 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TGT_TMS_0" "
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TGT_TRSTN_0" "MIV_RV32_C0_0:JTAG_TRSTN" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TMS" "TMS" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"COREJTAGDEBUG_C0_0:TRSTB" "TRSTB" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:PCLK" "CORETSE_0:MRXCLK" "CORETSE_0:MTXCLK" "CORETSE_0:PCLK" "CORETSE_1:MRXCLK" "CORETSE_1:MTXCLK" "CORETSE_1:PCLK" "CoreUARTapb_0:PCLK" "Core_reset_pf_0:CLK" "MIV_RV32_C0_0:CLK" "PF_CCC_0_0:OUT0_FABCLK_0" "SSDetect_0:rck" "SSDetect_1:rck" "pkt_counter_0:clk" "pkt_counter_1:clk" "sticky_bit_0:clk" "fabric_bridge_0:clk" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:PCLK" "CORETSE_0:MRXCLK" "CORETSE_0:MTXCLK" "CORETSE_0:PCLK" "CORETSE_1:MRXCLK" "CORETSE_1:MTXCLK" "CORETSE_1:PCLK" "CoreUARTapb_0:PCLK" "Core_reset_pf_0:CLK" "MIV_RV32_C0_0:CLK" "PF_CCC_0_0:OUT0_FABCLK_0" "SSDetect_0:rck" "SSDetect_1:rck" "pkt_counter_0:clk" "pkt_counter_1:clk" "sticky_bit_0:clk" "core_0:clk" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISCLKO" "SPISCLKO" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISDI" "SPISDI" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORESPI_0_0:SPISDO" "SPISDO" }
@@ -349,18 +349,18 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_IOD_CDR_C0_0:STREAM_START" "
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:RXCLK" "CORETSE_0:TBI_RX_CLK" "PF_IOD_CDR_C0_0:RX_CLK_R" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:RCG" "PF_IOD_CDR_C0_0:RX_DATA" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:TCG" "PF_IOD_CDR_C0_0:TX_DATA" "SSDetect_0:rx_data" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXRDY"       "fabric_bridge_0:tse0_mrx_rdy" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXSOF"       "fabric_bridge_0:tse0_mrx_sof" "pkt_counter_0:frame_sof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXEOF"       "fabric_bridge_0:tse0_mrx_eof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXDAT"       "fabric_bridge_0:tse0_mrx_dat" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXBYTEVALID" "fabric_bridge_0:tse0_mrx_bytevalid" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXACPT"      "fabric_bridge_0:tse0_mrx_acpt" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXRDY"       "fabric_bridge_0:tse0_mtx_rdy" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXSOF"       "fabric_bridge_0:tse0_mtx_sof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXEOF"       "fabric_bridge_0:tse0_mtx_eof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXDAT"       "fabric_bridge_0:tse0_mtx_dat" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXBYTEVALID" "fabric_bridge_0:tse0_mtx_bytevalid" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXACPT"      "fabric_bridge_0:tse0_mtx_acpt" "LED_DBG_MTXACPT_0" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXRDY"       "core_0:tse0_mrx_rdy" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXSOF"       "core_0:tse0_mrx_sof" "pkt_counter_0:frame_sof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXEOF"       "core_0:tse0_mrx_eof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXDAT"       "core_0:tse0_mrx_dat" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXBYTEVALID" "core_0:tse0_mrx_bytevalid" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MRXACPT"      "core_0:tse0_mrx_acpt" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXRDY"       "core_0:tse0_mtx_rdy" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXSOF"       "core_0:tse0_mtx_sof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXEOF"       "core_0:tse0_mtx_eof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXDAT"       "core_0:tse0_mtx_dat" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXBYTEVALID" "core_0:tse0_mtx_bytevalid" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_0:MTXACPT"      "core_0:tse0_mtx_acpt" "LED_DBG_MTXACPT_0" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"BIBUF_0:D" "CORETSE_0:MDO" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"BIBUF_0:E" "CORETSE_0:MDOEN" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"BIBUF_0:Y" "CORETSE_0:MDI" }
@@ -381,18 +381,18 @@ sd_connect_pins -sd_name ${sd_name} -pin_names {"PF_IOD_CDR_C1_0:STREAM_START" "
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:RXCLK" "CORETSE_1:TBI_RX_CLK" "PF_IOD_CDR_C1_0:RX_CLK_R" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:RCG" "PF_IOD_CDR_C1_0:RX_DATA" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:TCG" "PF_IOD_CDR_C1_0:TX_DATA" "SSDetect_1:rx_data" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXRDY"       "fabric_bridge_0:tse1_mrx_rdy" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXSOF"       "fabric_bridge_0:tse1_mrx_sof" "pkt_counter_1:frame_sof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXEOF"       "fabric_bridge_0:tse1_mrx_eof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXDAT"       "fabric_bridge_0:tse1_mrx_dat" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXBYTEVALID" "fabric_bridge_0:tse1_mrx_bytevalid" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXACPT"      "fabric_bridge_0:tse1_mrx_acpt" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXRDY"       "fabric_bridge_0:tse1_mtx_rdy" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXSOF"       "fabric_bridge_0:tse1_mtx_sof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXEOF"       "fabric_bridge_0:tse1_mtx_eof" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXDAT"       "fabric_bridge_0:tse1_mtx_dat" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXBYTEVALID" "fabric_bridge_0:tse1_mtx_bytevalid" }
-sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXACPT"      "fabric_bridge_0:tse1_mtx_acpt" "LED_DBG_MTXACPT_1" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXRDY"       "core_0:tse1_mrx_rdy" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXSOF"       "core_0:tse1_mrx_sof" "pkt_counter_1:frame_sof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXEOF"       "core_0:tse1_mrx_eof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXDAT"       "core_0:tse1_mrx_dat" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXBYTEVALID" "core_0:tse1_mrx_bytevalid" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MRXACPT"      "core_0:tse1_mrx_acpt" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXRDY"       "core_0:tse1_mtx_rdy" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXSOF"       "core_0:tse1_mtx_sof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXEOF"       "core_0:tse1_mtx_eof" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXDAT"       "core_0:tse1_mtx_dat" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXBYTEVALID" "core_0:tse1_mtx_bytevalid" }
+sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MTXACPT"      "core_0:tse1_mtx_acpt" "LED_DBG_MTXACPT_1" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MDO"   "tse1_loopback_0:mdo" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MDOEN" "tse1_loopback_0:mdoen" }
 sd_connect_pins -sd_name ${sd_name} -pin_names {"CORETSE_1:MDI"   "tse1_loopback_0:mdi" }

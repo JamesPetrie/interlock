@@ -27,6 +27,7 @@
 
 module norm_chk
   import recomp_pkg::*;
+  import canon_pkg::*;   // SPACE_W below; also orders canon_pkg for Synplify
 (
   input  wire        clk,
   input  wire        rst_n,

@@ -26,6 +26,11 @@ import_files -hdl_source {./src/src_hdl/axis_mux3.sv}
 import_files -hdl_source {./src/src_hdl/canon_proc.sv}
 import_files -hdl_source {./src/src_hdl/axis_pkt_gate.sv}
 import_files -hdl_source {./src/src_hdl/batch_buffer.sv}
+import_files -hdl_source {./src/src_hdl/recomp_pkg.sv}
+import_files -hdl_source {./src/src_hdl/norm_chk.sv}
+import_files -hdl_source {./src/src_hdl/log2_iter.sv}
+import_files -hdl_source {./src/src_hdl/recomp_feed.sv}
+import_files -hdl_source {./src/src_hdl/recomp_ilock_core.sv}
 
 build_design_hierarchy
 
