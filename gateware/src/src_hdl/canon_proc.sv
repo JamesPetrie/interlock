@@ -298,6 +298,9 @@ module canon_proc
         tkeep_m_r  <=    '0;
         tlast_m_r  <=  1'b1;
         first_seen <=  1'b0;
+        if (DIR == CANON_DIR_RSP) begin
+          prev_id <= '0; // reset the sequence on the response side
+        end
       end
 
       if (advance) begin
