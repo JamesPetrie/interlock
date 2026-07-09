@@ -15,6 +15,14 @@
 // START trigger) and arms the capture of the packet that follows. The
 // staging contract keeps other ID = 0 packets out of the slice.
 //
+// While a challenge's estimate loop runs, the packet port stays ready but
+// everything arriving is dropped whole, never forwarded: the batch_buffer
+// bank swap is timer-driven, so its drain must not stall across a challenge
+// of arbitrary duration. The staging contract already keeps traffic out of
+// an active challenge — the drop makes a violation degrade to lost packets
+// (already committed, so the digest exposes them) instead of corrupted
+// framing. Forwarding resumes only at an ingress packet boundary.
+//
 // The captured response is not forwarded: its header lands in a register
 // (parsed for PLD_LEN → tok_total; bucket and id/bucket-difference for the
 // scoring stage) and its payload streams byte-serially into a token-wide
@@ -99,18 +107,20 @@ module recomp_feed
   // ------------------------------------------------------------------
   // State
   // ------------------------------------------------------------------
-  typedef enum logic [2:0] {
+  typedef enum logic [3:0] {
     FWD,       // forward packets verbatim; detect the CTRL marker
+    CTRL_CHK,  // check for a CTRL packet
     CAP,       // capture the challenged response into the RAM
     LEN_EST,   // await the length estimate
     TIME_EST,  // await the timing estimate
     TOK_EST,   // await a token estimate, then reveal (or finish)
     EMIT,      // emit one TOKEN frame
-    DISPATCH   // await the terminal (EOS) estimate, then dispatch Û
+    DISPATCH,  // await the terminal (EOS) estimate, then dispatch Û
+    ALIGN      // drop until ingress silence at a packet boundary
   } state_t;
   state_t state;
 
-  logic [15:0] bcnt;          // beat index = word address within the packet
+  logic [15:0] bcnt;          // ingress beat index (word address)
 
   // captured response, split: the header in a register (it must be sliceable
   // for parsing), the payload in a token-wide RAM (one write + one read port,
@@ -124,7 +134,7 @@ module recomp_feed
   // token bytes assembled so far (byte 0 first); the completing byte goes
   // straight into the RAM write, so only CANON_TOK_BYTES-1 bytes stage here
   logic [8*(CANON_TOK_BYTES-1)-1:0] tok_buf;
-  logic [15:0] wr_tok;        // next token entry to write
+  tok_addr_t   wr_tok;        // next token entry to write
   tok_addr_t   idx;           // reveal position
   logic        est_phase;     // estimate word parity: 0 = value, 1 = probability
 
@@ -152,6 +162,7 @@ module recomp_feed
   // Combinational port control
   // ------------------------------------------------------------------
   wire fwd       = (state == FWD);
+  wire ctrl_chk  = (state == CTRL_CHK);
   wire cap       = (state == CAP);
   wire emit_tok  = (state == EMIT);
 
@@ -213,8 +224,9 @@ module recomp_feed
     .res   (log_res)
   );
 
-  // Û dispatch: u_out shows the final accumulator for exactly the cycle
-  // DISPATCH exits (the last frame's scoring has landed, the clear follows)
+  // Û dispatch: single-cycle pulse — u_out shows the final accumulator for
+  // exactly the cycle DISPATCH exits (the last frame's scoring has landed,
+  // the clear follows)
   assign out_valid = (state == DISPATCH) && (sc_state == SC_IDLE);
   assign id_out    = resp_hdr.id;
   assign u_out     = 64'(u_acc);
@@ -226,10 +238,12 @@ module recomp_feed
   // packet port ready: gated by the master when forwarding; while capturing,
   // header beats go full rate and a payload beat completes when its last
   // byte is consumed (quarter rate — harmless, one packet per challenge);
-  // stalled during the loop
-  assign tready_s = fwd ? tready_m
-                  : cap ? ((bcnt < 16'(HDR_BEATS)) || (byte_i == 2'd3))
-                  :       1'b0;
+  // full rate during the loop, where consumed beats are dropped so the
+  // batch_buffer drain never stalls (see the header note)
+  assign tready_s = fwd      ? tready_m
+                  : ctrl_chk ? 1'b0
+                  : cap      ? ((bcnt < 16'(HDR_BEATS)) || (byte_i == 2'd3))
+                  :            1'b1;
   wire in_fire = tvalid_s && tready_s;
 
   // master port: forwarded packet passthrough, or a one-beat token reveal
@@ -265,53 +279,60 @@ module recomp_feed
       u_acc      <= '0;
     end else begin
 
-      // shared header capture: every received packet's header is parsed
-      if (in_fire && (bcnt < 16'(HDR_BEATS)))
-        hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
+      // ingress beat counter (shared across all states)
+      if (in_fire) begin
+        bcnt <= !tlast_s ? bcnt + 16'h1 : 16'h0;
+      end
 
       case (state)
         // ---- forward verbatim; a CTRL marker arms the capture. ----
         FWD: if (in_fire) begin
-          if (!tlast_s) begin
-            bcnt <= bcnt + 16'h1;
-          end else begin
-            bcnt <= '0;
-            // CTRL marker: parsed ID = 0, and the packet must span a full
-            // header — anything shorter leaves a stale id view in hdr_bits
-            if ((resp_hdr.id == '0) && (bcnt >= 16'(HDR_BEATS - 1))) begin
-              state <= CAP;                      // next packet is the response
+          if (bcnt < 16'(HDR_BEATS)) begin
+            // header capture for CTRL packet detection
+            hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
+            // only a packet spanning exactly the full header can be CTRL —
+            // anything shorter leaves stale words in hdr_bits
+            if (tlast_s && (bcnt == 16'(HDR_BEATS - 1))) begin
+              state <= CTRL_CHK; // must be separate cycle to see the last header word
             end
+          end
+        end
+
+        CTRL_CHK: begin
+          if (resp_hdr.id == '0) begin
+            // CTRL packet: arm the capture of the next packet
+            state <= CAP;
+          end else begin
+            // not a CTRL packet: resume forwarding (the header is already staged)
+            state <= FWD;
           end
         end
 
         // ---- capture: payload bytes stream one per cycle into tok_buf,
         //      each completed token written to the RAM ----
         CAP: if (tvalid_s) begin
-          if (bcnt >= 16'(HDR_BEATS)) begin
+          if (bcnt < 16'(HDR_BEATS)) begin // header capture
+            hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
+          end else begin // payload capture
             // Processing tokens 1 byte at a time (tready pulled low meanwhile)
             // Write to the memory only when a full token is ready
             if (!tok_last) begin
               tok_buf[8*tok_i +: 8] <= tdata_s[8*byte_i +: 8];
             end else begin
-              tok_mem[wr_tok[ADDR_W-1:0]] <= {tdata_s[8*byte_i +: 8], tok_buf[8*(CANON_TOK_BYTES-1)-1:0]};
-              wr_tok <= wr_tok + 16'h1;
+              tok_mem[wr_tok] <= {tdata_s[8*byte_i +: 8], tok_buf[8*(CANON_TOK_BYTES-1)-1:0]};
+              wr_tok <= wr_tok + 1'b1;
             end
             byte_i <= byte_i + 2'd1;
             tok_i  <= tok_last ? 2'd0 : tok_i + 2'd1;
           end
-          // beat consumed: a header beat, or a payload beat's last byte
-          if (in_fire) begin
-            if (tlast_s) begin
-              // leave-state cleanup
-              idx    <= '0;
-              bcnt   <= '0;
-              byte_i <= '0;
-              tok_i  <= '0;
-              wr_tok <= '0;
-              state  <= LEN_EST;
-            end else begin
-              bcnt <= bcnt + 16'h1;
-            end
+          // packet complete — only once the beat is consumed (a payload
+          // tlast beat is held for its 4 byte-cycles)
+          if (tready_s && tlast_s) begin
+            // leave-state cleanup
+            byte_i <= '0;
+            tok_i  <= '0;
+            wr_tok <= '0;
+            state  <= LEN_EST;
           end
         end
 
@@ -341,9 +362,16 @@ module recomp_feed
         end
 
         // ---- feeding complete: wait out the final frame's scoring, then
-        //      dispatch Û and idle ----
+        //      dispatch Û (one-cycle pulse) and re-align ----
         DISPATCH: if (out_valid) begin
+          idx   <= '0;
           u_acc <= '0;
+          state <= ALIGN;
+        end
+
+        // ---- keep dropping until the ingress is silent at a packet
+        //      boundary, so FWD never resumes mid-packet ----
+        ALIGN: if ((bcnt == 16'h0) && !tvalid_s) begin
           state <= FWD;
         end
 
