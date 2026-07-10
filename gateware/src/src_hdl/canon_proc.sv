@@ -185,9 +185,8 @@ module canon_proc
   // ID value validity check
   wire hdr_id_valid_chk  = (hdr_id.id_cont != '0);
   // ID sequence check
-  wire hdr_id_seq_chk  = (DIR == CANON_DIR_REQ) ? (hdr_id.id_cont == (prev_id.id_cont + 1)) :
-                         (DIR == CANON_DIR_RSP) ? (hdr_id.id_cont  >  prev_id.id_cont)      :
-                                                  1'b0;
+  // Note: prev_id is reset on bucket boundary for RSP direction (overtake support)
+  wire hdr_id_seq_chk  = (hdr_id.id_cont > prev_id.id_cont) ? 1'b1 : 1'b0;
   // REFERENCE check
   wire hdr_ref_chk = (DIR == CANON_DIR_REQ) ? (hdr_ref < hdr_id) : 1'b1;
   // RESERVED value check
