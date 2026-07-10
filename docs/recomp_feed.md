@@ -36,6 +36,20 @@ The challenged response however is captured into a buffer and fed to the recompu
 
   The final estimate is still scored in both cases — in (b) token_N is scored from the buffered token even though it is not revealed, so a response spanning multiple packets is scored packet-by-packet with no cross-packet token context.
 
+## Challenge retry mechanisms
+
+Packet loss on the inference cluster's network is not catastrophic. The gatewey can set up a timeout for each request and re-try if not response arrived in time.
+
+The same is not true for the recomputation by default. An armed recomputation state waits for each estimate-reveal interaction to happen before reseting to idle state. So a lost packet there could deadlock the mechanism (e.g. a lost interlock reveal packet puts the interlock and the cluster out of sync both waiting for the other).
+
+To resolve such cross-dependencies, we introduce two types of timeout and retry mechanisms:
+- Challenge level retry: before any reveal happened, the challenge can be aborted and retried from start (re-feeding the whole sequence from the start).
+- Reveal level retry: after the first reveal, the challenge is no longer retryable (the prover learned information about the output already). From this point a timeout on an expected estimate results in the interlock re-sending the last reveal (token index and value).
+
+Notes:
+- The recomputation cluster should not re-send any packet without a prompt from the interlock.
+- The above mechanisms don't protect against a timed out packet still arriving at the end. The timeout values must be set such that they imply lost packets.
+
 ## Timing estimate
 
 The timing estimate predicts the bucket difference between the challenged response and the corresponding request. The original bucket numbers might be overridden in the packet headers, in which case the original difference must be supplied in the response packet's header (the low word of the RESERVED field).
