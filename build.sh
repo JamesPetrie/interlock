@@ -3,9 +3,16 @@
 # Runs Libero against gateware/script.tcl, logs to /tmp, sha256s the .job.
 #
 # Usage:
-#   ./build.sh            # build only
-#   ./build.sh --scp DST  # scp the .job to DST after build (e.g., laptop:~/Desktop/)
+#   ./build.sh                          # recomp top, 100 ms buckets (defaults)
+#   TOP=prod BUCKET_MS=1 ./build.sh     # prod top, production 1 ms buckets
+#   ./build.sh --scp DST                # scp the .job to DST after build
 set -eo pipefail
+
+TOP="${TOP:-recomp}"
+BUCKET_MS="${BUCKET_MS:-100}"
+case "$TOP" in prod|recomp) ;; *) echo "TOP must be prod or recomp" >&2; exit 1 ;; esac
+case "$BUCKET_MS" in 1|100) ;; *) echo "BUCKET_MS must be 1 or 100" >&2; exit 1 ;; esac
+export TOP BUCKET_MS
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GATEWARE_DIR="$REPO_ROOT/gateware"
@@ -26,7 +33,7 @@ echo "=== wiping stale Libero_Project ==="
 rm -rf "$GATEWARE_DIR/Libero_Project"
 
 # Run Libero
-echo "=== starting build at $(date -Iseconds) ==="
+echo "=== starting build at $(date -Iseconds) (TOP=$TOP BUCKET_MS=$BUCKET_MS) ==="
 echo "log: $LOG"
 cd "$GATEWARE_DIR"
 SECONDS=0
@@ -46,7 +53,7 @@ fi
 SIZE=$(stat -c%s "$JOB_PATH")
 DIGEST=$(sha256sum "$JOB_PATH" | awk '{print $1}')
 echo
-echo "=== build done in ${ELAPSED}s ==="
+echo "=== build done in ${ELAPSED}s (TOP=$TOP BUCKET_MS=$BUCKET_MS) ==="
 echo "  .job:    $JOB_PATH"
 echo "  size:    $SIZE bytes"
 echo "  sha256:  $DIGEST"

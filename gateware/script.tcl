@@ -1,4 +1,23 @@
 source ./common.tcl
+
+# ---------------------------------------------------------------------------
+# Build configuration knobs (environment variables; defaults preserve the
+# tree's historical behavior -- recomp top, 100 ms testing buckets):
+#   TOP       = recomp | prod   which interlock top to build
+#   BUCKET_MS = 100 | 1         bucket width (1 = production timing)
+# The values are stamped into the PROJECT's imported HDL copies only; the
+# checked-in sources are never modified. See 1_create_design.tcl.
+# ---------------------------------------------------------------------------
+set ILOCK_TOP "recomp"
+if { [info exists ::env(TOP)] } { set ILOCK_TOP $::env(TOP) }
+if { $ILOCK_TOP ni {prod recomp} } { error "TOP must be 'prod' or 'recomp' (got '$ILOCK_TOP')" }
+set ILOCK_BUCKET_MS 100
+if { [info exists ::env(BUCKET_MS)] } { set ILOCK_BUCKET_MS $::env(BUCKET_MS) }
+if { $ILOCK_BUCKET_MS ni {1 100} } { error "BUCKET_MS must be 1 or 100 (got '$ILOCK_BUCKET_MS')" }
+set ILOCK_TIMER_END     [expr {80000 * $ILOCK_BUCKET_MS - 1}]
+set ILOCK_BKTS_PER_CERT [expr {1000 / $ILOCK_BUCKET_MS}]
+puts "Build config: TOP=$ILOCK_TOP BUCKET_MS=$ILOCK_BUCKET_MS (TIMER_END=$ILOCK_TIMER_END BKTS_PER_CERT=$ILOCK_BKTS_PER_CERT)"
+
 set Prjname "Libero_Project"
 set PrjLocation "./$Prjname"
 
