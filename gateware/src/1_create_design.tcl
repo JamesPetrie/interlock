@@ -32,6 +32,18 @@ import_files -hdl_source {./src/src_hdl/log2_iter.sv}
 import_files -hdl_source {./src/src_hdl/recomp_feed.sv}
 import_files -hdl_source {./src/src_hdl/recomp_ilock_core.sv}
 
+# Stamp the bucket-width knob into the PROJECT's imported copies (the
+# checked-in sources keep their defaults; knobs are parsed in script.tcl).
+proc ilock_patch_bucket {f timer bkts} {
+    set fh [open $f r]; set txt [read $fh]; close $fh
+    set n1 [regsub {parameter int unsigned TIMER_END     = [0-9_]+} $txt                    "parameter int unsigned TIMER_END     = $timer" txt]
+    set n2 [regsub {parameter int unsigned BKTS_PER_CERT = [0-9_]+} $txt                    "parameter int unsigned BKTS_PER_CERT = $bkts" txt]
+    if { $n1 != 1 || $n2 != 1 } { error "bucket-param stamp failed for $f (TIMER=$n1 BKTS=$n2)" }
+    set fh [open $f w]; puts -nonewline $fh $txt; close $fh
+}
+ilock_patch_bucket "./$Prjname/hdl/fabric_bridge.sv"     $ILOCK_TIMER_END $ILOCK_BKTS_PER_CERT
+ilock_patch_bucket "./$Prjname/hdl/recomp_ilock_core.sv" $ILOCK_TIMER_END $ILOCK_BKTS_PER_CERT
+
 build_design_hierarchy
 
 # Create, configure and generate core components
@@ -71,7 +83,7 @@ file copy -force "./src/src_hdl/miv_rv32_opsrv_cfg_pkg.v" "./$Prjname/component/
 # Generate SmartDesign Components
 
 build_design_hierarchy
-source ./src/src_components/top.tcl
+source ./src/src_components/top_${ILOCK_TOP}.tcl
 
 # Set top level module
 build_design_hierarchy
