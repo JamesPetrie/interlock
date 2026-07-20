@@ -15,6 +15,9 @@ build_*.log
 __pycache__/
 *.pyc
 
+# KV-noise experiment data — multi-GB dumps, never committed
+experiments/kv_noise/kv_noise_data/
+
 # cocotb / Verilator simulation artifacts
 tb/**/sim_build*/
 tb/**/results.xml
