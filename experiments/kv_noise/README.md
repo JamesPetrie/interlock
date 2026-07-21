@@ -228,6 +228,57 @@ Keep run-ids descriptive (`a100-torch213-sdpa-1`); meta.json records the
 GPU/stack fingerprint, and `analyze_runs.py` flags cross-hardware pairs
 automatically.
 
+## Cloud sweep runbook (RunPod / Lambda)
+
+Each cell of the matrix is one rented pod and ~5 minutes of wall time;
+`cloud_sweep.sh` makes the pod side turnkey. (OpenRouter-style inference
+APIs can't run this — we need shell access to raw GPU instances.)
+
+1. **Rent a pod.** RunPod covers most SKUs (4090/A40/L40S/A100/H100/
+   H200); Lambda for GH200 (aarch64, closest rentable cousin of the
+   GB10). Use RunPod **Secure Cloud** for H3 cells — Community Cloud
+   hosts have heterogeneous drivers, fine for breadth, bad for
+   "same SKU + same stack" claims. Pick an official pytorch image
+   (that image *is* the stack under test; bring different images to
+   cover the torch-version axis).
+
+2. **Copy this directory and run it** (port/IP from the pod's Connect
+   panel):
+
+   ```
+   rsync -e "ssh -p <port>" -a --exclude kv_noise_data --exclude .venv \
+       ./ root@<ip>:kv_noise/
+   ssh -p <port> root@<ip> "cd kv_noise && ./cloud_sweep.sh"
+   ```
+
+   Flags: `--det` (add a determinism-flags run), `--dtype float16`,
+   `--attn eager|flash_attention_2`, `--runs N`, `--tag <extra>`,
+   `--full` (also tar full tensor dumps). The run-id base is derived
+   automatically (`{gpu}-t{torchver}-{attn}[-fp16]-{podid}`), and the
+   script prints the on-pod analysis before you tear the pod down, so
+   the H1 verdict is visible immediately.
+
+3. **Pull the manifest tar** (KBs — path is printed by the script),
+   untar every pod's tar into one local tree, and analyze them
+   together:
+
+   ```
+   mkdir -p cloud_data && tar -xzf manifests_*.tar.gz -C cloud_data
+   python analyze_runs.py cloud_data/ kv_noise_data/spark/
+   ```
+
+   Part 2 groups runs by (model, dtype, attn) stack and flags
+   cross-hardware pairs; the Spark runs join the comparison for free.
+
+4. **H3 (same SKU, two devices):** rent two Secure Cloud pods of the
+   same GPU type at once, run the identical `./cloud_sweep.sh` on both
+   (the auto pod-id suffix keeps run-ids distinct), pull both tars.
+   Bit-identical across the two pods = H3 holds for that SKU.
+
+5. **Full dumps** are only needed for cross-stack *numeric* diffs (the
+   H4 fallback-σ measurement) — pass `--full` on one bf16 run per SKU
+   and pull the (multi-GB) dumps tar for offline `kv_diff_stats`.
+
 Data dirs (`kv_noise_data/`, venvs) should not be committed — dumps are
 multi-GB. Keep them on the Mac / a drive; only this script and analysis
 code go in the repo.
