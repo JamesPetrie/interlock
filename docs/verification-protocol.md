@@ -237,7 +237,7 @@ During a challenge the recomputation interlock and the recomputation node exchan
 ```
               32 bit                32 bit
       +---------------------+---------------------+
-      |        VALUE        |     PROBABILITY     |   entry #0 — EOS on token estimates
+      |        VALUE        |     PROBABILITY     |
       +---------------------+---------------------+
       |          …          |          …          |
       +---------------------+---------------------+
@@ -246,7 +246,6 @@ During a challenge the recomputation interlock and the recomputation node exchan
 ```
 
 - Token `VALUE`s are the raw ciphertext-unit bytes; numeric `VALUE`s — length (in tokens) and timing (in buckets) — are big-endian.
-- Entry #0 of a **token** estimate is the EOS entry, matched by position, its `VALUE` ignored; length and timing estimates carry ordinary entries throughout.
 - The **final** pair is the catch-all — `VALUE` ignored, its probability charged per unlisted value. A frame ending on a dangling `VALUE` word reads as a bare catch-all probability.
 - Sequence per challenge, after the forwarded CTRL marker: one length estimate, one timing estimate, then one token estimate per position, the interlock answering each non-terminal token estimate with a reveal.
 
