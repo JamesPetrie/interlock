@@ -27,13 +27,9 @@
 module recomp_ilock_core
   import canon_pkg::*;
 #(
-  // bucket period in clk cycles - 1 (tick at timer == TIMER_END); 1 ms at
-  // the 80 MHz fabric clock. TBs shrink both of these.
-  // REVISIT: testing override — 100 ms buckets; production is
-  // TIMER_END = 79_999, BKTS_PER_CERT = 1000 (docs describe those).
-  parameter int unsigned TIMER_END     = 7_999_999,
-  // bucket periods per certificate (one cert per ~s)
-  parameter int unsigned BKTS_PER_CERT = 10
+  // REVISIT: testing override — 100 ms buckets; production is 1 ms buckets.
+  //parameter int unsigned BKT_MS     = 1,
+  parameter int unsigned BKT_MS     = 100,
 ) (
   input  wire        clk,      // fabric clock (CORETSE M*CLK domain; both MACs share it)
   input  wire        rst_n,    // active-low synchronous reset
@@ -68,6 +64,11 @@ module recomp_ilock_core
   output wire [31:0] tse1_mtx_dat,
   output wire [1:0]  tse1_mtx_bytevalid
 );
+
+  // bucket period in clk cycles - 1 (tick at timer == TIMER_END);
+  localparam int unsigned TIMER_END = (80_000 * BKT_MS) - 1; // 80 MHz clk
+  // buckets per certificate
+  localparam int unsigned BKTS_PER_CERT = 1000 / BKT_MS;  // certificate every 1s
 
   // Timer
   logic [31:0] timer;
