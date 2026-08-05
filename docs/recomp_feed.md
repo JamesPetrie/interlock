@@ -31,11 +31,9 @@ All packets except the challenged response are forwarded as-is. The challenged r
 The challenged response however is captured into a buffer and fed to the recomputation cluster token-by-token:
 1. Before feeding any tokens from the buffer, a CTRL packet is sent which triggers 3 estimation responses: length, timing and token_0.
 2. Upon receiving the token_0 estimates, the block enters a loop, revealing the actual token for each estimate received.
-3. The loop ends when the end of the payload is reached:
-  a. the packet was not full and the estimate for token_N+1 arrives (expecting the special end-of-stream entry to have high probability)
-  b. the packet was full and the estimate for token_N arrives (no point revealing token_N since token_N+1 is not in this packet)
+3. The loop ends when the end of the payload is reached and the estimate for token_N arrives (no point revealing token_N since there's no token_N+1 to predict)
 
-  The final estimate is still scored in both cases — in (b) token_N is scored from the buffered token even though it is not revealed, so a response spanning multiple packets is scored packet-by-packet with no cross-packet token context.
+Note: The final estimate is scored even if the packet is full (a response potentially continued in a later packet). Recomputation always scores a single packet.
 
 While a challenge's estimate loop runs, the packet port **stays ready and drops everything whole** — never forwarded — so the timer-driven `batch_buffer` drain is never stalled across a challenge of arbitrary duration. The staging contract already keeps traffic out of an active challenge; the drop makes a violation degrade to lost packets — already committed upstream, so the digest exposes them — instead of corrupted framing. Once the challenge completes, forwarding resumes only when the ingress is silent at a packet boundary, so it never resumes mid-packet.
 
@@ -78,16 +76,3 @@ There is a tradeoff between using raw probabilities p vs surprisals log(p) on th
 `Û` — the total over length, timing, and every token position — is
 dispatched as a single-cycle pulse together with the challenged response's
 `ID` as the block's output.
-
-**Why both length and per-position EOS.** They guard opposite directions. A
-*response longer than the model would generate* is caught online by the
-per-position EOS: the model bets mass on ending, the revealed token
-contradicts it, and the token's reduced probability is charged. A *response
-shorter than natural (premature termination — a covert channel)* can encode
-more information than a single token, but once the text is revealed, a single
-special token can hint where the end is supposed to be. The length
-estimate catches this because it is committed at START, before any token is
-revealed, so it reflects the natural length expected from the prompt alone.
-The two overlap a bit, but the overlap is negligible: after the full text
-is revealed EOS should be as easy to predict as any other token, so the
-terminal EOS surprisal is small and adds little on top of the length estimate.

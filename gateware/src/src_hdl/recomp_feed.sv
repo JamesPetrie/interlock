@@ -1,57 +1,4 @@
 // recomp_feed — recomputation dataplane (see docs/recomp_feed.md).
-//
-// Forwarding, the token-feeding loop, and estimate scoring: each frame is
-// normalization-checked (norm_chk), the actual value's probability is picked
-// out of the stream (the catch-all as the fallback, PROB_MIN on a
-// normalization failure), converted to a surprisal (log2_iter) and
-// accumulated into Û, which is dispatched on u_out at the end of the
-// challenge.
-//
-// Packet port (from batch_buffer): canonical packets, tuser = total byte
-// length @ beat #0. Every packet is forwarded verbatim toward the enclosure
-// (eth_reframe) EXCEPT the challenged response, which is preceded in the
-// stream by a CTRL packet — ID = 0, the current bucket in BUCKET, no
-// payload. The CTRL packet is itself forwarded (it is the recomputation
-// START trigger) and arms the capture of the packet that follows. The
-// staging contract keeps other ID = 0 packets out of the slice.
-//
-// While a challenge's estimate loop runs, the packet port stays ready but
-// everything arriving is dropped whole, never forwarded: the batch_buffer
-// bank swap is timer-driven, so its drain must not stall across a challenge
-// of arbitrary duration. The staging contract already keeps traffic out of
-// an active challenge — the drop makes a violation degrade to lost packets
-// (already committed, so the digest exposes them) instead of corrupted
-// framing. Forwarding resumes only at an ingress packet boundary.
-//
-// The captured response is not forwarded: its header lands in a register
-// (parsed for PLD_LEN → tok_total; bucket and id/bucket-difference for the
-// scoring stage) and its payload streams byte-serially into a token-wide
-// RAM — one entry per token, so CANON_TOK_BYTES of 2, 3 (beat-straddling)
-// or 4 all work and the reveal is a plain indexed read.
-// Tokens are fed back one at a time as one-beat TOKEN frames. After START
-// the enclosure emits a length estimate, a timing estimate, then a token
-// estimate per position; the loop reveals one token per token estimate until
-// the buffer is exhausted, then waits for the terminal (EOS) estimate and
-// dispatches Û.
-//
-// Estimate pacing: the estimate port is consumed only in the estimate states
-// (LEN_EST / TIME_EST / TOK_EST) — one beat per cycle, a frame ends at tlast —
-// and back-pressured everywhere else, so the upstream MAC FIFO holds whatever
-// arrives early (e.g. during CAP). Entries ride as (value, probability) word
-// pairs — value words raw (tokens verbatim, numeric values big-endian),
-// probability = every odd word, big-endian.
-//
-// Scoring: during a frame every probability streams through norm_chk while
-// the actual value's probability is latched (first value match wins; the
-// catch-all — the tlast pair — is the fallback). Entry #0 of a token
-// estimate is the EOS entry, identified by position: skipped for matching
-// on non-terminal frames, and the scored entry on the terminal frame (the
-// response ending has no token value to compare). At frame end a small
-// scorer FSM waits out norm_chk, picks the latched probability (PROB_MIN on
-// a normalization failure), owns the norm clear,
-// runs log2_iter, and accumulates Û -= log2(p). The next frame is held off
-// (tready_e) until the scorer is idle; token reveals overlap freely since
-// everything the scorer needs is latched before the frame ends.
 
 module recomp_feed
   import canon_pkg::*;
@@ -112,7 +59,7 @@ module recomp_feed
     TIME_EST,  // await the timing estimate
     TOK_EST,   // await a token estimate, then reveal (or finish)
     EMIT,      // emit one TOKEN frame
-    DISPATCH,  // await the terminal (EOS) estimate, then dispatch Û
+    DISPATCH,  // wait out the last scored estimate, then dispatch Û
     ALIGN      // drop until ingress silence at a packet boundary
   } state_t;
   state_t state;
@@ -148,7 +95,6 @@ module recomp_feed
   } sc_state_t;
   sc_state_t sc_state;
 
-  logic        est_first;     // inside the frame's first beat
   logic        val_hit_q;     // previous estimate word matched the actual value
   logic        p_latched;     // any probability latched (match or catch-all)
   logic [31:0] p_score;       // that probability, numeric (byte-swapped) form
@@ -189,11 +135,6 @@ module recomp_feed
   wire [31:0] act_val = (state == LEN_EST)  ? 32'(tok_total)
                       : (state == TIME_EST) ? bkt_diff
                       :                       32'(cur_tok);
-
-  // entry #0 of every token estimate is the EOS entry, identified by
-  // position: excluded from value matching on non-terminal frames.
-  wire act_eos = (state == TOK_EST) && (idx == tok_total); // Current actual is EOS, (position N+1, idx = N)
-  wire est_eos = (state == TOK_EST) && est_first;          // Current estimate pair is EOS
 
   // normalization check: each frame's probabilities accumulate
   wire        norm_fail, norm_busy;
@@ -277,7 +218,6 @@ module recomp_feed
       idx        <= '0;
       est_phase  <= 1'b0;
       sc_state   <= SC_IDLE;
-      est_first  <= 1'b1;
       val_hit_q  <= 1'b0;
       p_latched  <= 1'b0;
       p_score    <= '0;
@@ -349,18 +289,14 @@ module recomp_feed
         end
 
         TIME_EST: if (est_done) begin
-          state <= TOK_EST;
+          // skip the token loop if the payload is empty
+          state <= state_t'( (tok_total != 0) ? TOK_EST : DISPATCH );
         end
 
-        // ---- one estimate → reveal the next token, or finish once the buffer
-        //      is exhausted (the terminal EOS estimate is consumed here too) ----
+        // ---- one estimate → reveal the next token, or finish once the buffer is exhausted ----
         TOK_EST: if (est_done) begin
-          state <= state_t'(
-                      (idx             == tok_total)    ? DISPATCH :  // (non-full packet) received estimate even for token N+1 (EOS)
-                      (idx             <  tok_total-1)  ? EMIT :      // not received estimate for token N yet (Note: total-1 underflows on empty payload packets)
-                      (int'(tok_total) != TOK_MAX)      ? EMIT :      // non-full packet and not yet received estimate for token N+1 (EOS)
-                                                          DISPATCH);  // full packet, estimate for token N+1 is not needed
-                                                                      // we don't know if a next packet would continue the message or not
+          // reveal the next token, unless the last one is reached (no need to reveal the last)
+          state <= state_t'( (idx < tok_total-1) ? EMIT : DISPATCH );  // tok_total must not be 0 here
         end
 
         EMIT: if (out_fire) begin
@@ -388,14 +324,11 @@ module recomp_feed
       // estimate first flag, word parity (value/probability alternate),
       // value hit flag and score latch
       if (est_fire) begin
-        est_first <= tlast_e ? 1'b1 : 1'b0;
         est_phase <= tlast_e ? 1'b0 : !est_phase;
 
         // Capture if the value of the next estimate matches the actual token value
         if (!est_phase) begin
-          // (the EOS entry matches positionally only — never by value)
-          val_hit_q <= (!act_eos && !est_eos) ? (act_val == tdata_e_ord)
-                                              : (act_eos == est_eos);
+          val_hit_q <= (act_val == tdata_e_ord);
         end else begin
           val_hit_q <= 1'b0;
         end
