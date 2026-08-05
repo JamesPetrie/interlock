@@ -33,6 +33,10 @@ module fabric_bridge
   // REVISIT: testing override — 100 ms buckets; production is 1 ms buckets.
   //parameter int unsigned BKT_MS     = 1,
   parameter int unsigned BKT_MS     = 100,
+  // Derived from BKT_MS; parameters, not localparams, only so the TBs can
+  // override them (sim needs a short bucket AND few buckets per cert).
+  parameter int unsigned TIMER_END     = (80_000 * BKT_MS) - 1, // 80 MHz clk
+  parameter int unsigned BKTS_PER_CERT = 1000 / BKT_MS          // one cert / ~1 s
 ) (
   input  wire        clk,      // fabric clock (CORETSE M*CLK domain; both MACs share it)
   input  wire        rst_n,    // active-low synchronous reset
@@ -67,11 +71,6 @@ module fabric_bridge
   output wire [31:0] tse1_mtx_dat,
   output wire [1:0]  tse1_mtx_bytevalid
 );
-
-  // bucket period in clk cycles - 1 (tick at timer == TIMER_END);
-  localparam int unsigned TIMER_END = (80_000 * BKT_MS) - 1; // 80 MHz clk
-  // buckets per certificate
-  localparam int unsigned BKTS_PER_CERT = 1000 / BKT_MS;  // certificate every 1s
 
   // Timer
   logic [31:0] timer;
