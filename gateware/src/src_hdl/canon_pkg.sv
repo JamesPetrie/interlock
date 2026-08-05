@@ -31,7 +31,7 @@ package canon_pkg;
   localparam int unsigned CANON_RSP_RSVD_W  =  384;
 
 
-  localparam int unsigned CANON_TOK_BYTES   =    2;
+  localparam int unsigned CANON_TOK_BYTES   =    2; // recomp_feed only supports TOK_BYTES <= 2 currently
 
 
   // ---- scalar field types ----
@@ -39,7 +39,7 @@ package canon_pkg;
   typedef logic [CANON_BKT_W-1:0]            canon_bkt_t;
   typedef logic [CANON_KCOMMIT_W-1:0]        canon_kcommit_t;
 
-
+  typedef logic [8*CANON_TOK_BYTES - 1:0]    canon_tok_t;
 
   // Request identifier
   typedef struct packed {

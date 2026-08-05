@@ -97,9 +97,7 @@ module recomp_feed
   localparam int unsigned TOK_MAX       = (CANON_PKT_BYTES_MAX - CANON_RSP_HDR_BYTES) / CANON_TOK_BYTES;
   // RAM depth: one max canonical payload's worth of tokens
   localparam int unsigned ADDR_W        = $clog2(TOK_MAX);
-  // tkeep for a one-beat TOKEN frame — the low CANON_TOK_BYTES lanes valid
-  // (assumes CANON_TOK_BYTES <= 4, i.e. one token per AXIS beat)
-  localparam logic [3:0]  TOK_KEEP      = 4'((32'h1 << CANON_TOK_BYTES) - 32'h1);
+  localparam int unsigned TOK_MSBYTE    = CANON_TOK_BYTES - 1;
 
   typedef logic [ADDR_W-1:0] tok_addr_t;
 
@@ -126,16 +124,22 @@ module recomp_feed
   // BRAM-inferable). payload bytes stream one per cycle into the token
   // assembler in CAP, so a token straddling a beat boundary costs nothing.
   // Note: header storage is reused to detect the CTRL packet
-  canon_rsp_hdr_bits_t          hdr_bits;
-  logic [8*CANON_TOK_BYTES-1:0] tok_mem [0:TOK_MAX-1];
-  logic [1:0]  byte_i;        // byte within the held payload beat
-  logic [1:0]  tok_i;         // byte within the token being assembled
+  canon_rsp_hdr_bits_t   hdr_bits;
+  canon_tok_t            tok_mem [0:TOK_MAX-1];
+  logic [1:0]            byte_i;        // byte within the held payload beat
+  logic [1:0]            tok_i;         // byte within the token being assembled
   // token bytes assembled so far (byte 0 first); the completing byte goes
   // straight into the RAM write, so only CANON_TOK_BYTES-1 bytes stage here
-  logic [8*(CANON_TOK_BYTES-1)-1:0] tok_buf;
+  canon_tok_t  tok_buf;
+  canon_tok_t  tok_buf_next;
   tok_addr_t   wr_tok;        // next token entry to write
   tok_addr_t   idx;           // reveal position
   logic        est_phase;     // estimate word parity: 0 = value, 1 = probability
+
+  always_comb begin
+    tok_buf_next = tok_buf;
+    tok_buf_next[8*tok_i +: 8] = tdata_s[8*byte_i +: 8];
+  end
 
   typedef enum logic [1:0] {
     SC_IDLE,        // wait for a frame to complete
@@ -165,12 +169,10 @@ module recomp_feed
   wire cap       = (state == CAP);
   wire emit_tok  = (state == EMIT);
 
-  wire tok_last  = (tok_i == 2'(CANON_TOK_BYTES-1));
+  wire tok_last  = (tok_i == '0); // tok_i goes N-1...0
 
-  function automatic logic [31:0] bswap32(input logic [31:0] w);
-    return {w[7:0], w[15:8], w[23:16], w[31:24]};
-  endfunction
-
+  // Ethernet transmits with BE byte order while AXI-Stream uses LE, so numeric values ride swapped
+  wire [31:0] tdata_e_ord = {tdata_e[7:0], tdata_e[15:8], tdata_e[23:16], tdata_e[31:24]};
   // estimate port: consumed only in the estimate states, one beat per cycle,
   // held off while the scorer still works on the previous frame;
   // back-pressured elsewhere (the MAC FIFO holds early arrivals)
@@ -183,11 +185,10 @@ module recomp_feed
   // the actual value for the current estimate, in raw wire-byte form: tokens
   // compare verbatim, numeric values ride big-endian (hence the swap).
   // REVISIT LENGTH/TIMING value encodings (doc open items).
-  wire [31:0] cur_tok = 32'(tok_mem[idx]);
-  // TODO should not need swap here
-  wire [31:0] act_val = (state == LEN_EST)  ? bswap32(32'(tok_total))
-                      : (state == TIME_EST) ? bswap32(32'(bkt_diff))
-                      :                       cur_tok;
+  wire canon_tok_t cur_tok = tok_mem[idx];
+  wire [31:0] act_val = (state == LEN_EST)  ? 32'(tok_total)
+                      : (state == TIME_EST) ? bkt_diff
+                      :                       32'(cur_tok);
 
   // entry #0 of every token estimate is the EOS entry, identified by
   // position: excluded from value matching on non-terminal frames.
@@ -205,7 +206,7 @@ module recomp_feed
     .clr      (sc_read),
     .add      (est_fire && (est_phase || tlast_e)),
     .catchall (tlast_e),
-    .p        (bswap32(tdata_e)),   // TODO should not need swap here
+    .p        (tdata_e_ord),
     .fail     (norm_fail),
     .busy     (norm_busy)
   );
@@ -247,13 +248,18 @@ module recomp_feed
 
   // master port: forwarded packet passthrough, or a one-beat token reveal
   wire fwd_beat = fwd && tvalid_s;
+  // Ethernet uses BE byte order but AXI-Stream uses LE,
+  // so tdata LSBYTE is token MSBYTE
+  wire [31:0] tdata_m_drv_ord = {idx, cur_tok}; // REVISIT support CANON_TOK_BYTES > 2?
+  wire [31:0] tdata_m_drv     = {tdata_m_drv_ord[ 7: 0],
+                                 tdata_m_drv_ord[15: 8],
+                                 tdata_m_drv_ord[23:16],
+                                 tdata_m_drv_ord[31:24]};
   assign tvalid_m = fwd_beat || emit_tok;
-  assign tdata_m  = fwd ? tdata_s : cur_tok; // TODO add idx to the token frame
-  assign tkeep_m  = fwd ? tkeep_s : TOK_KEEP;
+  assign tdata_m  = fwd ? tdata_s : tdata_m_drv;
+  assign tkeep_m  = fwd ? tkeep_s : 4'b1111;
+  assign tuser_m  = fwd ? tuser_s : 16'd4;
   assign tlast_m  = fwd ? tlast_s : 1'b1;
-  assign tuser_m  = (fwd && bcnt == 16'h0) ? tuser_s
-                  : emit_tok               ? 16'(CANON_TOK_BYTES)
-                  :                          16'h0;
   wire out_fire = tvalid_m && tready_m;
 
   // ------------------------------------------------------------------
@@ -265,7 +271,7 @@ module recomp_feed
       bcnt       <= '0;
       hdr_bits   <= '0;
       byte_i     <= '0;
-      tok_i      <= '0;
+      tok_i      <= TOK_MSBYTE;
       tok_buf    <= '0;
       wr_tok     <= '0;
       idx        <= '0;
@@ -315,21 +321,23 @@ module recomp_feed
           end else begin // payload capture
             // Processing tokens 1 byte at a time (tready pulled low meanwhile)
             // Write to the memory only when a full token is ready
-            if (!tok_last) begin
-              tok_buf[8*tok_i +: 8] <= tdata_s[8*byte_i +: 8];
-            end else begin
-              tok_mem[wr_tok] <= {tdata_s[8*byte_i +: 8], tok_buf[8*(CANON_TOK_BYTES-1)-1:0]};
+            tok_buf <= tok_buf_next;
+            if (tok_last) begin
+              tok_mem[wr_tok] <= tok_buf_next;
               wr_tok <= wr_tok + 1'b1;
             end
+            // Ethernet uses BE byte order but AXI-Stream uses LE,
+            // so tdata LSBYTE is token MSBYTE
             byte_i <= byte_i + 2'd1;
-            tok_i  <= tok_last ? 2'd0 : tok_i + 2'd1;
+            tok_i  <= tok_last ? TOK_MSBYTE : tok_i - 1'b1;
           end
           // packet complete — only once the beat is consumed (a payload
           // tlast beat is held for its 4 byte-cycles)
           if (tready_s && tlast_s) begin
-            // leave-state cleanup
+            // leave-state cleanup (tok_i back to the per-token start, so the
+            // next challenge's capture is aligned)
             byte_i <= '0;
-            tok_i  <= '0;
+            tok_i  <= TOK_MSBYTE;
             wr_tok <= '0;
             state  <= LEN_EST;
           end
@@ -386,7 +394,7 @@ module recomp_feed
         // Capture if the value of the next estimate matches the actual token value
         if (!est_phase) begin
           // (the EOS entry matches positionally only — never by value)
-          val_hit_q <= (!act_eos && !est_eos) ? (act_val == tdata_e)
+          val_hit_q <= (!act_eos && !est_eos) ? (act_val == tdata_e_ord)
                                               : (act_eos == est_eos);
         end else begin
           val_hit_q <= 1'b0;
@@ -394,7 +402,7 @@ module recomp_feed
 
         // latch on a hit or catch-all, avoid latching multiple times
         if ((val_hit_q || tlast_e) && !p_latched) begin
-          p_score   <= bswap32(tdata_e); // TODO should not need swap here
+          p_score   <= tdata_e_ord;
           p_latched <= 1'b1;
         end
       end
