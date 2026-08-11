@@ -12,12 +12,12 @@ the running total `Û`, and hands off the result — the challenged response's
 ```
                         ┌───────────────────────────────────────┐
   AXIS in  ───────────▶ │              recomp_feed              │ ───────────▶ AXIS out
-  tuser:                │                                       │ tuser:
-   len @ beat #0        │  forward all but the final response   │  len @ beat#0
+  swap (inline)         │                                       │ tuser:
+  tuser:                │  forward the context verbatim         │  len @ beat#0
+   len @ beat #0        │                                       │
                         │                                       │
-                        │                                       │
-     id, Û ◀─────────── │  final response:                      │ ◀─────────── AXIS est
-                        │   START ─▶ len,timing,tok_0 estimates │
+     id, Û ◀─────────── │  challenged response (bucket's 1st):  │ ◀─────────── AXIS est
+                        │   swap ───▶ len,timing,tok_0 estimates│
                         │   loop: reveal tok_i ─▶ tok_i+1 est.  │
                         │                                       │
                         │                                       │
@@ -26,16 +26,16 @@ the running total `Û`, and hands off the result — the challenged response's
 
 ## Forwarding
 
-All packets except the challenged response are forwarded as-is. The challenged response is preceded by a CTRL packet (`ID = 0`, no payload) indicating the start of the recomputation.
+All packets except the challenged response are forwarded as-is. The challenged response is the first packet after the SWAP beat.
 
-The challenged response however is captured into a buffer and fed to the recomputation cluster token-by-token:
-1. Before feeding any tokens from the buffer, a CTRL packet is sent which triggers 3 estimation responses: length, timing and token_0.
+The challenged response's header however, gets sanitized to be identifiable and to prevent providing hints to the recomputation enclosure. It's tokens are not forwarded immediately either, but captured into a buffer and fed to the recomputation cluster token-by-token after the context:
+1. The closing swap beat ends the context, which triggers the expectation of 3 estimation responses: length, timing and token_0.
 2. Upon receiving the token_0 estimates, the block enters a loop, revealing the actual token for each estimate received.
 3. The loop ends when the end of the payload is reached and the estimate for token_N arrives (no point revealing token_N since there's no token_N+1 to predict)
 
 Note: The final estimate is scored even if the packet is full (a response potentially continued in a later packet). Recomputation always scores a single packet.
 
-While a challenge's estimate loop runs, the packet port **stays ready and drops everything whole** — never forwarded — so the timer-driven `batch_buffer` drain is never stalled across a challenge of arbitrary duration. The staging contract already keeps traffic out of an active challenge; the drop makes a violation degrade to lost packets — already committed upstream, so the digest exposes them — instead of corrupted framing. Once the challenge completes, forwarding resumes only when the ingress is silent at a packet boundary, so it never resumes mid-packet.
+While a challenge's estimate loop runs, the packet port **stays ready and drops everything whole** — never forwarded — so the timer-driven `batch_buffer` drain is never stalled across a challenge of arbitrary duration. The staging contract already keeps traffic out of an active challenge; the drop makes a violation degrade to lost packets — already committed upstream, so the digest exposes them — instead of corrupted framing. Once the challenge completes, the block resynchronises on the next **swap beat**, not merely at a packet boundary: arming is positional, so resuming mid-bucket could take a context packet for a challenged response. Little should arrive to drop in the first place — a bucket whose commitment does not match the expected digest never leaves the buffer — but the drop keeps the block sane if one is released anyway.
 
 ## Challenge retry mechanisms
 
@@ -61,6 +61,8 @@ The reveal and estimate frame formats are owned by `verification-protocol.md` (*
 
 Forwarded **context** packets are not reframed by the feed — they pass
 through verbatim with only the beat-#0 length carried on `tuser`.
+
+The **challenged** packet's header is sanitized and forwarded without the payload.
 
 ## Scoring
 
