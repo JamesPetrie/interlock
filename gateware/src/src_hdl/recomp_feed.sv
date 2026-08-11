@@ -52,15 +52,15 @@ module recomp_feed
   // State
   // ------------------------------------------------------------------
   typedef enum logic [3:0] {
-    FWD,       // forward packets verbatim; detect the CTRL marker
-    CTRL_CHK,  // check for a CTRL packet
-    CAP,       // capture the challenged response into the RAM
+    ARMED,     // at a bucket boundary: the next packet is the challenged response
+    CHL,       // the challenged response: sanitized header out, payload captured
+    CTX,       // forward the context verbatim; the closing swap ends the bucket
     LEN_EST,   // await the length estimate
     TIME_EST,  // await the timing estimate
     TOK_EST,   // await a token estimate, then reveal (or finish)
     EMIT,      // emit one TOKEN frame
     DISPATCH,  // wait out the last scored estimate, then dispatch Û
-    ALIGN      // drop until ingress silence at a packet boundary
+    ALIGN      // drop whole packets until the next swap beat re-arms
   } state_t;
   state_t state;
 
@@ -69,8 +69,7 @@ module recomp_feed
   // captured response, split: the header in a register (it must be sliceable
   // for parsing), the payload in a token-wide RAM (one write + one read port,
   // BRAM-inferable). payload bytes stream one per cycle into the token
-  // assembler in CAP, so a token straddling a beat boundary costs nothing.
-  // Note: header storage is reused to detect the CTRL packet
+  // assembler in CHL, so a token straddling a beat boundary costs nothing.
   canon_rsp_hdr_bits_t   hdr_bits;
   canon_tok_t            tok_mem [0:TOK_MAX-1];
   logic [1:0]            byte_i;        // byte within the held payload beat
@@ -101,7 +100,7 @@ module recomp_feed
   log2_acc_t   u_acc;         // Û accumulator, Q.LOG2_FRAC_W
 
   // parse the captured header. the payload holds tok_total = PLD_LEN /
-  // CANON_TOK_BYTES tokens; the other fields (bucket, id/bucket-difference)
+  // CANON_TOK_BYTES tokens; the other fields (id, bucket-difference)
   // are for the scoring stage.
   wire canon_rsp_hdr_t resp_hdr  = canon_rsp_hdr_from_wire_bits(hdr_bits);
   wire tok_addr_t      tok_total = tok_addr_t'(resp_hdr.pld_len / CANON_TOK_BYTES);
@@ -110,12 +109,34 @@ module recomp_feed
   // ------------------------------------------------------------------
   // Combinational port control
   // ------------------------------------------------------------------
-  wire fwd       = (state == FWD);
-  wire ctrl_chk  = (state == CTRL_CHK);
-  wire cap       = (state == CAP);
+  wire armed     = (state == ARMED);
+  wire chl       = (state == CHL);
+  wire ctx       = (state == CTX);
   wire emit_tok  = (state == EMIT);
 
   wire tok_last  = (tok_i == '0); // tok_i goes N-1...0
+
+  // bucket delimiter: the empty swap beat batch_buffer re-inserts — the only
+  // beat with no bytes (a real packet's last beat always keeps >= 1)
+  wire swap_beat = (tkeep_s == '0) && tlast_s;
+
+  // the challenged response's phases within CHL
+  wire chl_hdr   = chl && (bcnt < 16'(HDR_BEATS));
+
+  // sanitize mask, built field-wise on the header struct (no hardcoded
+  // field order or offsets) and serialized to wire byte order by the
+  // package: only ID passes through — PLD_LEN and RESERVED are the answers
+  // to the length and timing estimates, and BUCKET is zeroed too, so the
+  // header carries nothing but the challenge identity. Constant, so it
+  // folds away in synthesis.
+  canon_rsp_hdr_t san_flds;
+  always_comb begin
+    san_flds        = '0;
+    san_flds.id     = '1;
+  end
+  wire canon_rsp_hdr_bits_t san_mask = canon_rsp_hdr_to_wire_bits(san_flds);
+  // the mask word walking with the header beats
+  wire [31:0] san_word = san_mask[32 * bcnt[HB_W-1:0] +: 32];
 
   // Ethernet transmits with BE byte order while AXI-Stream uses LE, so numeric values ride swapped
   wire [31:0] tdata_e_ord = {tdata_e[7:0], tdata_e[15:8], tdata_e[23:16], tdata_e[31:24]};
@@ -172,23 +193,34 @@ module recomp_feed
   assign id_out    = resp_hdr.id;
   assign u_out     = 64'(u_acc);
 
-  // the non-length header fields beyond the timing word wait for the scoring
-  // encodings to be pinned
-  wire _unused = &{1'b0, tkeep_e, resp_hdr.bucket, resp_hdr.id};
+  wire _unused = &{1'b0, tkeep_e, resp_hdr.bucket};
 
-  // packet port ready: gated by the master when forwarding; while capturing,
-  // header beats go full rate and a payload beat completes when its last
-  // byte is consumed (quarter rate — harmless, one packet per challenge);
-  // full rate during the loop, where consumed beats are dropped so the
+  // ---- packet port routing ----
+  // A slave beat either FORWARDS to the master — the handshake passes
+  // straight through — or is consumed LOCALLY: swap beats, captured payload
+  // byte-cycles, and everything in the drop states.
+  wire s_fwd = chl_hdr || (ctx && !swap_beat);
+
+  // local consumption rate: while armed only the delimiter is taken (the
+  // response that follows is left for CHL to take from its beat #0); a
+  // payload beat completes when its last byte is consumed (quarter rate —
+  // harmless, one packet per challenge); full rate everywhere else, so the
   // batch_buffer drain never stalls (see the header note)
-  assign tready_s = fwd      ? tready_m
-                  : ctrl_chk ? 1'b0
-                  : cap      ? ((bcnt < 16'(HDR_BEATS)) || (wr_tok != tok_total-1 ? byte_i == 2'd3 : tok_last))
-                  :            1'b1;
+  assign tready_s = s_fwd ? tready_m
+                  : armed ? swap_beat
+                  : chl   ? (wr_tok != tok_total-1 ? byte_i == 2'd3 : tok_last)
+                  :         1'b1;
   wire in_fire = tvalid_s && tready_s;
 
-  // master port: forwarded packet passthrough, or a one-beat token reveal
-  wire fwd_beat = fwd && tvalid_s;
+  // master port: the mux tree mirrors tvalid_m's two sources — forwarded
+  // beats ride the slave handshake (challenge header sanitized and
+  // reframed, context verbatim), the else branch is EMIT's one-beat token
+  // reveal (never concurrent with forwarding).
+  // The challenge header's framing is its own: with the payload stripped
+  // (not masked — the packet's size alone would leak the length estimate's
+  // answer) the packet ends at the last header beat, and the length on
+  // tuser is the header's.
+  wire [15:0] chl_user = (bcnt == '0) ? 16'(CANON_RSP_HDR_BYTES) : 16'h0;
   // Ethernet uses BE byte order but AXI-Stream uses LE,
   // so tdata LSBYTE is token MSBYTE
   wire [31:0] tdata_m_drv_ord = {idx, cur_tok}; // REVISIT support CANON_TOK_BYTES > 2?
@@ -196,11 +228,14 @@ module recomp_feed
                                  tdata_m_drv_ord[15: 8],
                                  tdata_m_drv_ord[23:16],
                                  tdata_m_drv_ord[31:24]};
-  assign tvalid_m = fwd_beat || emit_tok;
-  assign tdata_m  = fwd ? tdata_s : tdata_m_drv;
-  assign tkeep_m  = fwd ? tkeep_s : 4'b1111;
-  assign tuser_m  = fwd ? tuser_s : 16'd4;
-  assign tlast_m  = fwd ? tlast_s : 1'b1;
+  assign tvalid_m = (s_fwd && tvalid_s) || emit_tok;
+  assign tdata_m  = s_fwd ? (chl ? (tdata_s & san_word) : tdata_s)
+                  :         tdata_m_drv;
+  assign tkeep_m  = s_fwd ? tkeep_s : 4'b1111;
+  assign tuser_m  = s_fwd ? (chl ? chl_user : tuser_s)
+                  :         16'd4;
+  assign tlast_m  = s_fwd ? (chl ? (bcnt == 16'(HDR_BEATS - 1)) : tlast_s)
+                  :         1'b1;
   wire out_fire = tvalid_m && tready_m;
 
   // ------------------------------------------------------------------
@@ -208,7 +243,10 @@ module recomp_feed
   // ------------------------------------------------------------------
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      state      <= FWD;
+      // the stream starts at a bucket boundary (batch_buffer emits nothing
+      // before its first drain, and the swap beat trails each bucket), so
+      // reset lands armed
+      state      <= ARMED;
       bcnt       <= '0;
       hdr_bits   <= '0;
       byte_i     <= '0;
@@ -230,33 +268,19 @@ module recomp_feed
       end
 
       case (state)
-        // ---- forward verbatim; a CTRL marker arms the capture. ----
-        FWD: if (in_fire) begin
-          if (bcnt < 16'(HDR_BEATS)) begin
-            // header capture for CTRL packet detection
-            hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
-            // only a packet spanning exactly the full header can be CTRL —
-            // anything shorter leaves stale words in hdr_bits
-            if (tlast_s && (bcnt == 16'(HDR_BEATS - 1))) begin
-              state <= CTRL_CHK; // must be separate cycle to see the last header word
-            end
-          end
+        // ---- at a bucket boundary: swap beats are consumed in place
+        //      (empty buckets), the first packet is the challenged
+        //      response — left on the port for CHL to take from beat #0 ----
+        ARMED: if (tvalid_s && !swap_beat) begin
+          state <= CHL;
         end
 
-        CTRL_CHK: begin
-          if (resp_hdr.id == '0) begin
-            // CTRL packet: arm the capture of the next packet
-            state <= CAP;
-          end else begin
-            // not a CTRL packet: resume forwarding (the header is already staged)
-            state <= FWD;
-          end
-        end
-
-        // ---- capture: payload bytes stream one per cycle into tok_buf,
-        //      each completed token written to the RAM ----
-        CAP: if (tvalid_s) begin
-          if (bcnt < 16'(HDR_BEATS)) begin // header capture
+        // ---- the challenged response: header beats into the register
+        //      (forwarding sanitized as they go), payload bytes one per
+        //      cycle into tok_buf, each completed token written to the RAM
+        //      (payload never forwarded) ----
+        CHL: if (tvalid_s) begin
+          if (chl_hdr) begin // header capture
             hdr_bits[32 * bcnt[HB_W-1:0] +: 32] <= tdata_s;
           end else begin // payload capture
             // Processing tokens 1 byte at a time (tready pulled low meanwhile)
@@ -279,8 +303,14 @@ module recomp_feed
             byte_i <= '0;
             tok_i  <= TOK_MSBYTE;
             wr_tok <= '0;
-            state  <= LEN_EST;
+            state  <= CTX;
           end
+        end
+
+        // ---- context: forward verbatim; the closing swap beat is consumed
+        //      (never forwarded) and arms the estimate expectation ----
+        CTX: if (in_fire && swap_beat) begin
+          state <= LEN_EST;
         end
 
         // ---- initial estimates: length, then timing ----
@@ -312,13 +342,14 @@ module recomp_feed
           state <= ALIGN;
         end
 
-        // ---- keep dropping until the ingress is silent at a packet
-        //      boundary, so FWD never resumes mid-packet ----
-        ALIGN: if ((bcnt == 16'h0) && !tvalid_s) begin
-          state <= FWD;
+        // ---- keep dropping until the next swap beat: arming is
+        //      positional, so the block must re-sync on a bucket boundary,
+        //      never mid-bucket ----
+        ALIGN: if (in_fire && swap_beat) begin
+          state <= ARMED;
         end
 
-        default: state <= FWD;
+        default: state <= ALIGN;
       endcase
 
       // estimate first flag, word parity (value/probability alternate),
