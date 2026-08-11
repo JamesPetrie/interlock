@@ -42,7 +42,11 @@ module batch_buffer
 
   // bank-swap tick and timer (single-cycle pulse)
   input wire         tick,
-  input wire [31:0]  timer    // used for grace period
+  input wire [31:0]  timer,   // used for grace period
+
+  // Bucket release gating feature
+  input wire  rd_gate_en_valid,   // release gate enable valid
+  input wire  rd_gate_en          // release gate enable value
 );
 
   // ------------------------------------------------------------------
@@ -124,6 +128,19 @@ module batch_buffer
                        : (rd_pkt_len[1:0] == 2'd2) ? 4'b0011
                        : (rd_pkt_len[1:0] == 2'd3) ? 4'b0111
                        :                             4'b1111;
+
+  // Read gate enable capture logic
+  logic rd_gate_en_r;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      rd_gate_en_r <= 1'b0;
+    end else begin
+      if (rd_gate_en_valid) begin
+        rd_gate_en_r <= rd_gate_en;
+      end
+    end
+  end
 
   // ------------------------------------------------------------------
   // Sequential
@@ -278,8 +295,8 @@ module batch_buffer
 
       if ( timer == (GRACE_PERIOD-1) ) begin
         // Start drain only after the grace period
-        drain_sel[1] <= 1'b1; // mark the drain bank selctor valid
-        if (rd_limit != '0) begin
+        if ( (rd_limit != '0) && rd_gate_en_r ) begin
+          drain_sel[1] <= 1'b1; // mark the drain bank selctor valid
           dstate <= D_PFX_RD;
         end else if (OUTPUT_SWAP && first_tick_seen) begin
           // empty bucket: still emit the trailing swap beat (except for grace #0)

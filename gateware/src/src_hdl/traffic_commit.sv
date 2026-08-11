@@ -58,7 +58,11 @@ module traffic_commit #(
   output wire [15:0] tuser_m,
 
   output wire         overall_valid,
-  output wire [255:0] overall
+  output wire [255:0] overall,
+
+  // Bucket release gating feature: the overall hash is compared to the expected
+  input  wire [255:0] overall_exp,
+  output wire         overall_match
 );
 
   // Output swap-beat masking (OUTPUT_SWAP=0): the stripped beat is consumed
@@ -160,5 +164,7 @@ module traffic_commit #(
 
   assign overall_valid = ovr_ov;
   assign overall       = ovr_od;
+
+  assign overall_match = (overall_exp == ovr_od);
 
 endmodule

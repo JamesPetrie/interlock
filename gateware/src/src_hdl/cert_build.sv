@@ -1,33 +1,4 @@
 // cert_build — certificate construction and signature.
-//
-// The top layer of the commitment hierarchy (see docs/cert_build.md). Once
-// per second it takes the finished "overall" hash plus the second's metadata,
-// assembles the signed message m, computes tau = HMAC_k(m) on its own hash
-// core, and drives the certificate frame out a 32-bit AXI-Stream port:
-//
-//   m   = ( version, interlock_id, bucket_start, num_buckets, nonce,
-//           overall_req, overall_rsp, prev_tau )
-//   tau = HMAC_k( m )
-//   frame = [ reserved canonical header (zeros) ] || m || tau
-//
-// The reserved zero header (HDR_BYTES, its leading id = 0) flags the frame as a
-// certificate to the receiver. The block latches one overall digest (with its
-// metadata) on an in_valid pulse and is busy ~one HMAC until the frame drains.
-//
-// RSP_SYNC selects the rsp input's pairing. 1 (prod): rsp is synchronous —
-// a certificate needs both digests, one rsp per cert. 0 (recomp core): rsp
-// is asynchronous — a free-running sample latched whenever its valid pulses
-// (like the nonce), never gating emission; certificates follow the req
-// digest's cadence alone and carry the last-sampled value (zero before the
-// first sample, stale after — pairing/validity semantics are the protocol
-// layer's to define).
-// It cannot back-pressure -- an overall arrives once per certificate period
-// (~1 s), vastly longer than that, so a pulse sink with no in_ready suffices.
-//
-// Just structural wiring, no state machine: a serializer streams m into the
-// HMAC, and a second serializer streams the assembled frame out when the HMAC
-// finishes. The two serializers' own sequencing plus the HMAC's done is all the
-// ordering the feed -> mac -> emit pipeline needs.
 
 module cert_build
 #(
@@ -35,7 +6,8 @@ module cert_build
   parameter logic [31:0] INTERLOCK_ID = 32'h42,
   parameter int unsigned HDR_BYTES    = 64,                 // reserved cert-header length
   parameter int unsigned NUM_BUCKETS  = 1000,               // buckets per certificate
-  parameter bit          RSP_SYNC     = 1'b1                // 0: rsp sampled async, req drives emission
+  parameter bit          RECOMP       = 1'b0,               // 0: workload interlock, 1: recomp interlock
+  parameter int unsigned RECOMP_W     = 1                   // recomp port width (default 1 when not used)
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -44,9 +16,14 @@ module cert_build
   // overall digests + this second's metadata (latched on the in_valid pulse)
   input  wire         in_valid_req,
   input  wire [255:0] in_overall_req,
+  input  wire         in_req_match,
   input  wire         in_valid_rsp,
   input  wire [255:0] in_overall_rsp,
   input  wire [127:0] in_nonce,
+
+  // Recomp port
+  input wire          in_valid_recomp,
+  input wire [255:0]  in_recomp,
 
   // certificate frame master (len @ beat #0)
   output wire        c_valid,
@@ -66,7 +43,7 @@ module cert_build
     logic [31:0]  num_buckets;
     logic [127:0] nonce;
     logic [255:0] overall_req;
-    logic [255:0] overall_rsp;
+    logic [255:0] overall_rsp_recomp;
     logic [255:0] prev_tau;
   } cert_msg_t;
 
@@ -75,39 +52,46 @@ module cert_build
 
   logic         overall_req_valid;
   logic [255:0] overall_req;
+  logic         overall_req_match;
 
   logic         overall_rsp_valid;
   logic [255:0] overall_rsp;
 
+  logic [RECOMP_W-1:0] recomp;
+
+
   logic [127:0] nonce_q;                  // this second's nonce, latched with the overalls
 
-  wire digests_valid = overall_req_valid && (!RSP_SYNC || overall_rsp_valid);
+  wire digests_valid = overall_req_valid && (RECOMP || overall_rsp_valid);
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       overall_req_valid <= 1'b0;
       overall_req       <= '0;
+      overall_req_match <= 1'b0;
       overall_rsp_valid <= 1'b0;
       overall_rsp       <= '0;
+      recomp            <= '0;
       nonce_q           <= '0;
     end else begin
       if (in_valid_req) begin
         overall_req_valid <= 1'b1;
         overall_req       <= in_overall_req;
+        overall_req_match <= in_req_match;
         nonce_q           <= in_nonce; // also update the nonce if changed
       end
       if (in_valid_rsp) begin
         overall_rsp_valid <= 1'b1;
         overall_rsp       <= in_overall_rsp;
-        if (RSP_SYNC) begin
-          nonce_q <= in_nonce; // also update the nonce if changed
-        end
+        nonce_q           <= in_nonce; // also update the nonce if changed
+      end
+      if (in_valid_recomp) begin
+        recomp <= in_recomp;
+        // no need to capture valid and update nonce here, only overall_req_valid triggers the certificate
       end
       if (digests_valid) begin
         overall_req_valid <= 1'b0;
-        if (RSP_SYNC) begin
-          overall_rsp_valid <= 1'b0;
-        end
+        overall_rsp_valid <= 1'b0;
       end
     end
   end
@@ -125,6 +109,11 @@ module cert_build
   // m assembled combinationally from the latched per-certificate values (the
   // registered overalls + nonce, and bkt_start/prev_tau_q before their
   // post-cert bump).
+  // overall_rsp_recomp depends on configuration so driving that separately.
+  // m_reg is written by the always_comb below, and
+  // a variable written there may not be written by any other process.
+  wire [255:0] overall_rsp_recomp;
+
   cert_msg_t m_reg;
   always_comb begin
     m_reg.version      = VERSION;
@@ -133,9 +122,19 @@ module cert_build
     m_reg.num_buckets  = 32'(NUM_BUCKETS);
     m_reg.nonce        = nonce_q;
     m_reg.overall_req  = overall_req;
-    m_reg.overall_rsp  = overall_rsp;
+    m_reg.overall_rsp_recomp = overall_rsp_recomp;
     m_reg.prev_tau     = prev_tau_q;
   end
+
+  generate
+    if (!RECOMP) begin : g_workld
+      assign overall_rsp_recomp = overall_rsp;
+    end else begin : g_recomp
+      assign overall_rsp_recomp = { overall_req_match,            // MSB 1'b1 if the request digest matches the expected value
+                                    {(256-1-RECOMP_W){1'b0}},     // 0-fill unused bits
+                                    recomp                    };
+    end
+  endgenerate
 
   logic cuser_pend;     // the frame's length rides its first beat
 

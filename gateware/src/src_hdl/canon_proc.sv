@@ -29,6 +29,7 @@
 
 module canon_proc
   import canon_pkg::*;
+  import sha256_pkg::*;
 #(
   // Selects the canonical-header struct *type* parsed in this direction
   // (see the g_canon generate block).
@@ -58,6 +59,9 @@ module canon_proc
 
   // Nonce output
   output wire [CANON_NONCE_W-1:0] nonce,
+
+  // Expected certificate digest output
+  output wire [SHA256_DIGEST_W-1:0] exp_digest,
 
   // AXI-Stream sync master — one 64-byte sync packet per tick: the bucket
   // the tick closes + first-arrival feedback for the closed bucket
@@ -116,6 +120,11 @@ module canon_proc
   logic [CANON_NONCE_W-1:0] nonce_r;
 
   assign nonce = nonce_r;
+
+  // Expected digest register
+  logic [SHA256_DIGEST_W-1:0] exp_digest_r;
+
+  assign exp_digest = exp_digest_r;
 
   // ------------------------------------------------------------------
   // Header view of the register — the head is the packet's beat #0 in
@@ -197,12 +206,12 @@ module canon_proc
   // content rules, disabled wholesale on the recomp ingress
   wire hdr_content_chk =  RECOMP
                       || (
-                             hdr_id_valid_chk
-                          && hdr_id_seq_chk
+                             hdr_id_seq_chk
                           && hdr_ref_chk
                           && hdr_rsvd_chk);
 
   wire hdr_chk =    hdr_fract_chk       // integrity: full header
+                 && hdr_id_valid_chk    // integrity: valid ID value
                  && hdr_pld_len_chk     // integrity: buffer sizing
                  && hdr_pld_rem_chk     // integrity: token alignment
                  && hdr_bkt_chk         // integrity: timing isolation
@@ -255,12 +264,17 @@ module canon_proc
   // payload verdict, evaluated at the tlast beat
   wire pkt_drop    = shift_drop[0] || (out_cnt_next != exp_total);
 
-  // nonce capture register
+  // nonce and expected digest capture register
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      nonce_r <= '0;
-    end else if (hdr_rdy && hdr_fract_chk && (hdr_id == '0)) begin
-      nonce_r <= CANON_NONCE_W'(hdr_kcommit);
+      nonce_r      <= '0;
+      exp_digest_r <= '0;
+    end else if (hdr_rdy && hdr_fract_chk) begin
+      case(hdr_id)
+        0: nonce_r      <= CANON_NONCE_W'(hdr_kcommit);
+        1: exp_digest_r <= SHA256_DIGEST_W'(hdr_kcommit);
+        default: ;
+      endcase
     end
   end
 

@@ -12,7 +12,7 @@
 //
 //   cert_build + canon_proc sync  ─►  mux ─► reframe  ─►  port 0
 //
-// The frontend stages the challenge slice (context packets, the CTRL marker,
+// The frontend stages the challenge slice (context packets,
 // the challenged response) through port 0; the slice is committed and
 // buffered exactly like prod's request path, then recomp_feed forwards the
 // context to the enclosure, runs the estimate/reveal loop against the
@@ -26,10 +26,9 @@
 
 module recomp_ilock_core
   import canon_pkg::*;
+  import sha256_pkg::*;
 #(
-  // REVISIT: testing override — 100 ms buckets; production is 1 ms buckets.
-  //parameter int unsigned BKT_MS     = 1,
-  parameter int unsigned BKT_MS     = 100,
+  parameter int unsigned BKT_MS     = 1000, // 1 bucket per certificate
   // Derived from BKT_MS; parameters, not localparams, only so the TBs can
   // override them (sim needs a short bucket AND few buckets per cert).
   parameter int unsigned TIMER_END     = (80_000 * BKT_MS) - 1, // 80 MHz clk
@@ -128,6 +127,7 @@ module recomp_ilock_core
   wire [3:0]   chl_tkeep_cp2pg;
   wire [15:0]  chl_tuser_cp2pg;
   wire [127:0] cert_nonce;
+  wire [SHA256_DIGEST_W-1:0] exp_cert_digest;
 
   canon_proc #(
     .DIR         (CANON_DIR_REQ), // use REQ for nonce support
@@ -148,6 +148,7 @@ module recomp_ilock_core
     .tlast_m  (chl_tlast_cp2pg),
     .tuser_m  (chl_tuser_cp2pg),
     .nonce    (cert_nonce),
+    .exp_digest  (exp_cert_digest),
     .tvalid_sync (sync_tvalid),
     .tready_sync (sync_tready),
     .tdata_sync  (sync_tdata),
@@ -189,6 +190,7 @@ module recomp_ilock_core
   wire [15:0]  chl_tuser_tc2bb;
   wire         chl_ovr_valid;
   wire [255:0] chl_ovr_digest;
+  wire         chl_ovr_match;
 
   traffic_commit #(
     .HDR_BYTES   (CANON_REQ_HDR_BYTES),
@@ -210,11 +212,11 @@ module recomp_ilock_core
     .tlast_m  (chl_tlast_tc2bb),
     .tuser_m  (chl_tuser_tc2bb),
     .overall_valid (chl_ovr_valid),
-    .overall       (chl_ovr_digest)
+    .overall       (chl_ovr_digest),
+    .overall_exp   (exp_cert_digest),
+    .overall_match (chl_ovr_match)
   );
 
-  // no OUTPUT_SWAP delimiter toward recomp_feed: the feed identifies the
-  // challenged response by the CTRL marker, not by batch boundaries
   wire         chl_tvalid_bb2rf, chl_tready_bb2rf, chl_tlast_bb2rf;
   wire [31:0]  chl_tdata_bb2rf;
   wire [3:0]   chl_tkeep_bb2rf;
@@ -222,7 +224,7 @@ module recomp_ilock_core
 
   batch_buffer #(
     .GRACE_PERIOD (2000),  // matches prod's drop-gated ingress
-    .OUTPUT_SWAP  (0)
+    .OUTPUT_SWAP  (1)
   ) buffer_chl (
     .clk      (clk),
     .rst_n    (rst_n),
@@ -239,7 +241,9 @@ module recomp_ilock_core
     .tlast_m  (chl_tlast_bb2rf),
     .tuser_m  (chl_tuser_bb2rf),
     .tick     (tick),
-    .timer    (timer)
+    .timer    (timer),
+    .rd_gate_en_valid (chl_ovr_valid),
+    .rd_gate_en       (chl_ovr_match)
   );
 
   // ====================================================================
@@ -340,11 +344,13 @@ module recomp_ilock_core
   // before the first challenge, stale between challenges).
   cert_build #(
     .NUM_BUCKETS (BKTS_PER_CERT),
-    .RSP_SYNC    (1'b0)
+    .RECOMP      (1),
+    .RECOMP_W    (128)  // {id, Û} width
   ) u_cert (
     .clk (clk), .rst_n (rst_n), .key (256'd99),
     .in_valid_req (chl_ovr_valid), .in_overall_req (chl_ovr_digest),
-    .in_valid_rsp (recomp_valid),  .in_overall_rsp (256'({id_val, u_val})),
+    .in_req_match(chl_ovr_match), .in_valid_recomp(recomp_valid), .in_recomp({id_val, u_val}),
+    .in_valid_rsp (1'b0),  .in_overall_rsp ('0),  // rsp not used here
     .in_nonce (cert_nonce),
     .c_valid (c_tvalid), .c_ready (c_tready), .c_data (c_tdata),
     .c_keep (c_tkeep), .c_last (c_tlast), .c_user (c_tuser)
