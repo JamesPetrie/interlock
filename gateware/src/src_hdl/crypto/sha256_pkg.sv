@@ -10,6 +10,8 @@
 
 package sha256_pkg;
 
+  localparam int unsigned SHA256_DIGEST_W = 256;
+
   // Initial hash value H(0).
   localparam logic [255:0] SHA256_H_INIT = {
     32'h6a09e667, 32'hbb67ae85, 32'h3c6ef372, 32'ha54ff53a,

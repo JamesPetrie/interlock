@@ -163,6 +163,7 @@ module fabric_bridge
     .tlast_m  (req_tlast_cp2pg),
     .tuser_m  (req_tuser_cp2pg),
     .nonce    (cert_nonce),
+    .exp_digest (),
     // sync toward the client (spliced into the response egress mux)
     .tvalid_sync (sync_req_tvalid),
     .tready_sync (sync_req_tready),
@@ -229,7 +230,10 @@ module fabric_bridge
     .tlast_m  (req_tlast_tc2bb),
     .tuser_m  (req_tuser_tc2bb),
     .overall_valid (req_ovr_valid),
-    .overall       (req_ovr_digest)
+    .overall       (req_ovr_digest),
+    .overall_exp   ('0),
+    .overall_match ()
+
   );
 
   wire         req_tvalid_o, req_tready_o, req_tlast_o;
@@ -256,7 +260,9 @@ module fabric_bridge
     .tlast_m  (req_tlast_o),
     .tuser_m  (req_tuser_o),
     .tick     (tick),
-    .timer    (timer)
+    .timer    (timer),
+    .rd_gate_en_valid (1'b1),
+    .rd_gate_en       (1'b1)
   );
 
   // 2×1 request-egress mux: forwarded requests (port 0, default grant) +
@@ -370,6 +376,7 @@ module fabric_bridge
     .tlast_m  (rsp_tlast_cp2bb),
     .tuser_m  (rsp_tuser_cp2bb),
     .nonce    (),
+    .exp_digest (),
     // sync toward the server (spliced into the request egress mux)
     .tvalid_sync (sync_rsp_tvalid),
     .tready_sync (sync_rsp_tready),
@@ -407,7 +414,9 @@ module fabric_bridge
     .tlast_m  (rsp_tlast_bb2tc),
     .tuser_m  (rsp_tuser_bb2tc),
     .tick     (tick),
-    .timer    (timer)
+    .timer    (timer),
+    .rd_gate_en_valid (1'b1),
+    .rd_gate_en       (1'b1)
   );
 
   wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;
@@ -437,7 +446,9 @@ module fabric_bridge
     .tlast_m  (rsp_tlast_o),
     .tuser_m  (rsp_tuser_o),
     .overall_valid (rsp_ovr_valid),
-    .overall       (rsp_ovr_digest)
+    .overall       (rsp_ovr_digest),
+    .overall_exp   ('0),
+    .overall_match ()
   );
 
   // combined certificate -> axis_mux3
@@ -447,10 +458,12 @@ module fabric_bridge
   wire [15:0] c_tuser;
 
   cert_build #(
-    .NUM_BUCKETS(BKTS_PER_CERT)
+    .NUM_BUCKETS  (BKTS_PER_CERT),
+    .RECOMP       (0)
   ) u_cert (
     .clk (clk), .rst_n (rst_n), .key (99),
-    .in_valid_req (req_ovr_valid), .in_overall_req (req_ovr_digest), // pulse sink: cert period (~s) >> HMAC
+    .in_valid_req (req_ovr_valid), .in_overall_req (req_ovr_digest),
+    .in_req_match(1'b0), .in_valid_recomp(1'b0), .in_recomp('0), // match and recomp not used here
     .in_valid_rsp (rsp_ovr_valid), .in_overall_rsp (rsp_ovr_digest),
     .in_nonce (cert_nonce),
     .c_valid (c_tvalid), .c_ready (c_tready), .c_data (c_tdata),
