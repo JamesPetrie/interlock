@@ -33,9 +33,11 @@ The challenged response's header however, gets sanitized to be identifiable and 
 2. Upon receiving the token_0 estimates, the block enters a loop, revealing the actual token for each estimate received.
 3. The loop ends when the end of the payload is reached and the estimate for token_N arrives (no point revealing token_N since there's no token_N+1 to predict)
 
+No end-of-context marker is sent toward the enclosure: the last context packet's `ID` matches the challenged response's, so the context is self-terminating.
+
 Note: The final estimate is scored even if the packet is full (a response potentially continued in a later packet). Recomputation always scores a single packet.
 
-While a challenge's estimate loop runs, the packet port **stays ready and drops everything whole** — never forwarded — so the timer-driven `batch_buffer` drain is never stalled across a challenge of arbitrary duration. The staging contract already keeps traffic out of an active challenge; the drop makes a violation degrade to lost packets — already committed upstream, so the digest exposes them — instead of corrupted framing. Once the challenge completes, the block resynchronises on the next **swap beat**, not merely at a packet boundary: arming is positional, so resuming mid-bucket could take a context packet for a challenged response. Little should arrive to drop in the first place — a bucket whose commitment does not match the expected digest never leaves the buffer — but the drop keeps the block sane if one is released anyway.
+While a challenge's estimate loop runs, the packet port **stays ready and drops everything whole** — never forwarded — so the timer-driven `batch_buffer` drain is never stalled across a challenge of arbitrary duration. The staging contract already keeps traffic out of an active challenge; the drop makes a violation degrade to lost packets — already committed upstream, so the digest exposes them — instead of corrupted framing. Once the challenge completes, the block resynchronises on the next **swap beat**, not merely at a packet boundary: arming is positional, so resuming mid-bucket could take a context packet for a challenged response. Little should arrive to drop in the first place — the buffer retains the challenged bucket for the duration of the challenge and releases nothing but bucket-boundary beats meanwhile, and a bucket whose commitment does not match the expected digest never leaves it at all — but the drop keeps the block sane if one is released anyway.
 
 ## Challenge retry mechanisms
 
@@ -47,6 +49,10 @@ To resolve such cross-dependencies, we introduce two types of timeout and retry 
 - Challenge level retry: before any reveal happened, the challenge can be aborted and retried from start (re-feeding the whole sequence from the start).
 - Reveal level retry: after the first reveal, the challenge is no longer retryable (the prover learned information about the output already). From this point a timeout on an expected estimate results in the interlock re-sending the last reveal (token index and value).
 
+One timeout counter serves both. It reloads whenever an estimate frame completes and counts down in **bucket ticks** (`TIMEOUT_TICKS`), so the window scales with the bucket period rather than needing its own time base.
+
+A reveal-level retry needs nothing from upstream — the enclosure still holds the context, so only the prompt is repeated. A challenge-level retry needs the slice again, which the feed does not keep: it requests a **replay** from the buffer, which retains the challenged bucket until the recomputation successfully completes.
+
 Notes:
 - The recomputation cluster should not re-send any packet without a prompt from the interlock.
 - The above mechanisms don't protect against a timed out packet still arriving at the end. The timeout values must be set such that they imply lost packets.
@@ -57,12 +63,12 @@ The timing estimate predicts the bucket difference between the challenged respon
 
 ## Frame formats
 
-The reveal and estimate frame formats are owned by `verification-protocol.md` (*Recomputation challenge frames*). Note: the current RTL still emits the bare token in the reveal frame; the `(index, token)` frame is pending on the recomp feature branch.
+The reveal and estimate frame formats are owned by `verification-protocol.md` (*Recomputation challenge frames*).
 
 Forwarded **context** packets are not reframed by the feed — they pass
 through verbatim with only the beat-#0 length carried on `tuser`.
 
-The **challenged** packet's header is sanitized and forwarded without the payload.
+The **challenged** packet is forwarded in place as a header-only packet: only `ID` survives, `PLD_LEN`, `RESERVED` are zeroed, and the payload is **stripped rather than masked** to avoid giving away information the prover needs to predict. Furthermore, `BUCKET` is also zeroed to make the challenged response packet uniqulely identifiable in the stream.
 
 ## Scoring
 

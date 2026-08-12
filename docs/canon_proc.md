@@ -13,7 +13,7 @@ This document describes the **canonical packet processor** — the canonical lay
 
 The processor sees only the Ethernet DATA field, already de-framed (including the removal of PAD bytes).
 
-The `DIR` parameter fixes which canonical header this instance parses: the **request** header or the **response** header. The recomputation instance does not have it's on DIR value now, it uses `CHK_CONTENT` to disable the checks which are not needed there.
+The `DIR` parameter fixes which canonical header this instance parses: the **request** header or the **response** header. The recomputation instance does not have it's on DIR value now, it uses `RECOMP` to disable the checks which are not needed there and to restrict admission to inference packets.
 
 ## Header capture — shift register
 
@@ -27,14 +27,14 @@ If header checks passed, the packet passes through **verbatim**: header and payl
 
 Where a failure is addressed depends on which check failing:
 
-- a **header-check failure** (integrity or content) is known before the packet's first byte leaves the register, so the processor **suppresses the packet's emission**. Checks split into two classes by the `CHK_CONTENT` parameter (default on).
+- a **header-check failure** (integrity or content) is known before the packet's first byte leaves the register, so the processor **suppresses the packet's emission**. Checks split into two classes by the `RECOMP` parameter (off by default, so content checks run).
   - **Integrity checks** — always on; that the beats form a well-formed canonical packet:
     - **full-header** check: the packet is long enough to carry a complete header (guards against a fractional or spliced header window).
     - `PLD_LEN` range: payload fits the maximum canonical payload (`PLD_MAX = CANON_PKT_BYTES_MAX − HDR_BYTES`).
     - `PLD_LEN` remainder: inference packets (ID LSB `inf` set) must carry a payload that is a multiple of `CANON_TOK_BYTES`.
     - `BUCKET` match: the header's bucket equals the interlock's current bucket.
-  - **Content checks** — gated on `CHK_CONTENT`:
-    - `ID` validity: `ID != 0 && ID != 1` — IDs 0 and 1 are reserved (certificate and sync control packets).
+    - `ID` validity: `ID != 0 && ID != 1` — IDs 0 and 1 are reserved (certificate and sync control packets). With `RECOMP` this also requires the `inf` bit, so the recomputation ingress admits inference packets only.
+  - **Content checks** — skipped wholesale when `RECOMP` is set:
     - `ID` monotonicity: `id_cont` strictly greater than `prev_id`, the last packet that fully passed (header **and** payload). On the RSP direction `prev_id` resets at each bucket boundary, so responses need only be ordered within a bucket (overtake support).
     - `REFERENCE` (REQ only): `reference < id`.
     - `RESERVED` value: the reserved field is all-zero.
@@ -48,7 +48,7 @@ Dropped packets are simply dropped — not counted, not escalated; recovery, if 
 
 The reserved `ID = 0` transaction carries a **nonce** rather than a normal request, in its `KEY_COMMIT` field. That field lives only in the request header, so this requires `DIR = CANON_DIR_REQ` (the recomp ingress uses REQ for exactly this reason). The low `CANON_NONCE_W` bits of `KEY_COMMIT` are latched into the `nonce` register and driven continuously on the `nonce` output until the next nonce packet replaces it.
 
-Note: Nonce capture is independent of `CHK_CONTENT`: but what happens to the packet itself depends on config — with content checks on it fails `ID` validity and is **suppressed** on the output; with them off it passes through as the CTRL marker. The nonce latch fires either way.
+Note: the packet itself always fails `ID` validity (a reserved ID) and is **suppressed** on the output.
 
 ## Timer synchronization — sync packets
 

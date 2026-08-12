@@ -23,9 +23,8 @@ superseded by the production line but remains the cross-checked reference for
 the hash/certificate math.
 
 Terminology note: this document uses **epoch** for the certificate window
-(`N` buckets; one certificate per epoch — 1 s / 1000 × 1 ms buckets in the
-production parameters: `TIMER_END = 79_999` at the 80 MHz fabric clock,
-`BKTS_PER_CERT = 1000`). The other docs call this the "cert window" or
+(`N` buckets; one certificate per epoch — 1 s / 1000 × 1 ms buckets at the
+production setting of `BKT_MS = 1`). The other docs call this the "cert window" or
 "second".
 
 ## 1. Objective and trust boundary
