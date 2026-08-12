@@ -306,6 +306,7 @@ module recomp_ilock_core
     .tdata_e  (est_tdata),
     .tkeep_e  (est_tkeep),
     .tlast_e  (est_tlast),
+    .tick     (tick),
     .out_valid (recomp_valid),
     .id_out    (id_val),
     .u_out     (u_val)

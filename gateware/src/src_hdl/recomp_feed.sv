@@ -30,6 +30,9 @@ module recomp_feed
   input  wire [3:0]  tkeep_e,
   input  wire        tlast_e,
 
+  // Timer ticks for re-try feature
+  input  wire        tick,
+
   // Entropy result dispatch
   output wire        out_valid,
   output wire [63:0] id_out,
@@ -238,6 +241,11 @@ module recomp_feed
                   :         1'b1;
   wire out_fire = tvalid_m && tready_m;
 
+  localparam int unsigned TIMEOUT_TICKS = 10;
+  logic [$clog2(TIMEOUT_TICKS+1)-1:0] timeout_cnt;
+
+  wire timeout = (timeout_cnt == '0);
+
   // ------------------------------------------------------------------
   // Sequential
   // ------------------------------------------------------------------
@@ -260,6 +268,7 @@ module recomp_feed
       p_latched  <= 1'b0;
       p_score    <= '0;
       u_acc      <= '0;
+      timeout_cnt <= TIMEOUT_TICKS;
     end else begin
 
       // ingress beat counter (shared across all states)
@@ -324,9 +333,15 @@ module recomp_feed
         end
 
         // ---- one estimate → reveal the next token, or finish once the buffer is exhausted ----
-        TOK_EST: if (est_done) begin
-          // reveal the next token, unless the last one is reached (no need to reveal the last)
-          state <= state_t'( (idx < tok_total-1) ? EMIT : DISPATCH );  // tok_total must not be 0 here
+        TOK_EST: if (est_done || timeout) begin
+          if (!est_done && idx != '0) begin // TODO IDX = 0 will do a full retry instead
+            idx <= idx - 1'b1;
+          end
+          // do another reveal, unless the last one is reached (no need to reveal the last)
+          state <= state_t'( (!est_done || (idx < tok_total-1)) ? EMIT : DISPATCH );  // tok_total must not be 0 here
+          timeout_cnt <= TIMEOUT_TICKS;
+        end else if (tick) begin
+          timeout_cnt <= timeout_cnt - 1'b1;
         end
 
         EMIT: if (out_fire) begin
