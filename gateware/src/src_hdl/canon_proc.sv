@@ -33,8 +33,8 @@ module canon_proc
   // Selects the canonical-header struct *type* parsed in this direction
   // (see the g_canon generate block).
   parameter canon_dir_t DIR = CANON_DIR_REQ,
-  // Content checks enable. Integrity checks are always stay on.
-  parameter bit CHK_CONTENT = 1'b1
+  // Recomputation design mode
+  parameter bit RECOMP = 1'b0
 ) (
   input  wire        clk,
   input  wire        rst_n,
@@ -183,7 +183,8 @@ module canon_proc
   // bucket check
   wire hdr_bkt_chk = (hdr_bkt == curr_bkt);
   // ID value validity check
-  wire hdr_id_valid_chk  = (hdr_id.id_cont != '0);
+  wire hdr_id_valid_chk  = (hdr_id.id_cont != '0) &&
+                           (!RECOMP || hdr_id.inf);
   // ID sequence check
   // Note: prev_id is reset on bucket boundary for RSP direction (overtake support)
   wire hdr_id_seq_chk  = (hdr_id.id_cont > prev_id.id_cont) ? 1'b1 : 1'b0;
@@ -194,7 +195,7 @@ module canon_proc
 
 
   // content rules, disabled wholesale on the recomp ingress
-  wire hdr_content_chk = !CHK_CONTENT
+  wire hdr_content_chk =  RECOMP
                       || (
                              hdr_id_valid_chk
                           && hdr_id_seq_chk

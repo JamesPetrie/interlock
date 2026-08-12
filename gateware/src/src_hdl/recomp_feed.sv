@@ -183,7 +183,7 @@ module recomp_feed
   // batch_buffer drain never stalls (see the header note)
   assign tready_s = fwd      ? tready_m
                   : ctrl_chk ? 1'b0
-                  : cap      ? ((bcnt < 16'(HDR_BEATS)) || (byte_i == 2'd3))
+                  : cap      ? ((bcnt < 16'(HDR_BEATS)) || (wr_tok != tok_total-1 ? byte_i == 2'd3 : tok_last))
                   :            1'b1;
   wire in_fire = tvalid_s && tready_s;
 

@@ -131,8 +131,7 @@ module recomp_ilock_core
 
   canon_proc #(
     .DIR         (CANON_DIR_REQ), // use REQ for nonce support
-    .CHK_CONTENT (1'b0)   // replayed traffic: integrity checks only, and the
-                          // ID=0 CTRL marker must reach recomp_feed
+    .RECOMP      (1)              // Recomputation design
   ) canon_proc_chl (
     .clk      (clk),
     .rst_n    (rst_n),
