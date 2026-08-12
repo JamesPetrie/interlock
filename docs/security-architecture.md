@@ -9,9 +9,8 @@ It complements the existing docs rather than replacing them:
 
 - `verification-protocol.md` — the protocol itself (objects, challenge flow,
   recomputation options).
-- `prod_ilock_core.md`, `prod_canon_proc.md` — the production core's block
-  designs (further block detail lives in the RTL headers under
-  `gateware/src/src_hdl/`).
+- `prod_ilock_core.md` — the production core's block design (further block
+  detail lives in the RTL headers under `gateware/src/src_hdl/`).
 - `ethernet-frame-sanitization.md` — the per-field 802.3 sanitization rules.
 - `recomp_ilock_core.md`, `recomp_feed.md` — the recomputation interlock.
 - `gateware-crypto-backend.md` — key custody and side-channel decisions.
