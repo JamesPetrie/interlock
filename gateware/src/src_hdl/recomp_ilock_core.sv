@@ -222,6 +222,13 @@ module recomp_ilock_core
   wire [3:0]   chl_tkeep_bb2rf;
   wire [15:0]  chl_tuser_bb2rf;
 
+  // bucket retry control: recomp_feed retains the challenged bucket until the
+  // challenge dispatches (recomp_valid doubles as the release ack), and
+  // replays it on a challenge-level retry. Declared here — ahead of the
+  // recomp_feed instance that drives them — for the buffer's ports below.
+  wire         chl_bkt_replay;
+  wire         recomp_valid;
+
   batch_buffer #(
     .GRACE_PERIOD (2000),  // matches prod's drop-gated ingress
     .OUTPUT_SWAP  (1)
@@ -243,7 +250,9 @@ module recomp_ilock_core
     .tick     (tick),
     .timer    (timer),
     .rd_gate_en_valid (chl_ovr_valid),
-    .rd_gate_en       (chl_ovr_match)
+    .rd_gate_en       (chl_ovr_match),
+    .bkt_ack          (recomp_valid),
+    .bkt_replay       (chl_bkt_replay)
   );
 
   // ====================================================================
@@ -282,7 +291,6 @@ module recomp_ilock_core
   wire [31:0] fwd_tdata;
   wire [3:0]  fwd_tkeep;
   wire [15:0] fwd_tuser;
-  wire        recomp_valid;
   wire [63:0] id_val;
   wire [63:0] u_val;
 
@@ -307,6 +315,7 @@ module recomp_ilock_core
     .tkeep_e  (est_tkeep),
     .tlast_e  (est_tlast),
     .tick     (tick),
+    .bkt_replay(chl_bkt_replay),
     .out_valid (recomp_valid),
     .id_out    (id_val),
     .u_out     (u_val)

@@ -46,7 +46,12 @@ module batch_buffer
 
   // Bucket release gating feature
   input wire  rd_gate_en_valid,   // release gate enable valid
-  input wire  rd_gate_en          // release gate enable value
+  input wire  rd_gate_en,         // release gate enable value
+
+  // Bucket retry feature: the issued bucket stays retained until
+  // acknowledged; a request re-issues it from the start
+  input wire  bkt_ack,            // done with the retained bucket (pulse)
+  input wire  bkt_replay          // re-issue the retained bucket (pulse)
 );
 
   // ------------------------------------------------------------------
@@ -129,6 +134,13 @@ module batch_buffer
                        : (rd_pkt_len[1:0] == 2'd3) ? 4'b0111
                        :                             4'b1111;
 
+  // Bucket retry: once a drain starts, the bucket stays retained — the
+  // banks stop swapping (fill discards its periods in place) and rd_limit
+  // is preserved — until bkt_ack; bkt_replay re-walks it at a grace boundary.
+  logic lock;          // set at drain start, released only at a tick after ack
+  logic ack_pend;      // bkt_ack latched until the tick consumes it
+  logic replay_pend;   // bkt_replay latched until a grace boundary consumes it
+
   // Read gate enable capture logic
   logic rd_gate_en_r;
 
@@ -150,6 +162,9 @@ module batch_buffer
       fill_sel   <= 1'b0; // bank 0 (always valid)
       drain_sel  <= 2'b01; // invalid, bank 1
       first_tick_seen <= 1'b0;
+      lock       <= 1'b0;
+      ack_pend   <= 1'b0;
+      replay_pend<= 1'b0;
       fstate     <= F_ADMIT;
       wr_ptr     <= '0;
       wr_cmt     <= '0;
@@ -271,12 +286,27 @@ module batch_buffer
         default: dstate <= D_IDLE;   // D_IDLE: wait for the tick
       endcase
 
+      // ====================== bucket retry bookkeeping ==================
+      if (bkt_ack) begin
+        ack_pend <= 1'b1;
+      end
+      if (bkt_replay) begin
+        replay_pend <= 1'b1;
+      end
+
       // =========================== bank swap ============================
       if (tick) begin
-        // Swap drain side but mark as invalid for now (for isolation)
-        drain_sel[0] <= !drain_sel[0];
+        // lock is released here rather than at the ack itself, so it only
+        // ever changes at the tick: the delimiter and grace blocks below
+        // read it directly and cannot fall out of lockstep with this swap.
+        if (!lock || ack_pend) begin
+          // Swap drain side but mark as invalid for now (for isolation)
+          drain_sel[0] <= !drain_sel[0];
+          lock         <= 1'b0;
+          ack_pend     <= 1'b0;
+        end
         drain_sel[1] <= 1'b0;
-        rd_ptr       <= '0;
+        rd_ptr       <= '0;   // fresh walk either way — a replay also rewinds here
 
         // Write side can only swap at the delimiter
 
@@ -284,20 +314,25 @@ module batch_buffer
       end
 
       if (in_delimiter) begin
-        // Swap fill side
-        fill_sel <= !fill_sel;
+        if (!lock) begin
+          // Swap fill side
+          fill_sel <= !fill_sel;
+
+          // Store final committed write index for reads
+          rd_limit <= wr_cmt;
+        end // held: stay in the bank and discard the period's traffic
         wr_ptr   <= '0;
         wr_cmt   <= '0;
-
-        // Store final committed write index for reads
-        rd_limit <= wr_cmt;
       end
 
       if ( timer == (GRACE_PERIOD-1) ) begin
         // Start drain only after the grace period
-        if ( (rd_limit != '0) && rd_gate_en_r ) begin
+        if (   (!lock && rd_limit != '0 && rd_gate_en_r) //    original release
+            || ( lock && replay_pend ) ) begin           // or replay request
           drain_sel[1] <= 1'b1; // mark the drain bank selctor valid
-          dstate <= D_PFX_RD;
+          dstate       <= D_PFX_RD;
+          lock         <= 1'b1;
+          replay_pend  <= 1'b0;
         end else if (OUTPUT_SWAP && first_tick_seen) begin
           // empty bucket: still emit the trailing swap beat (except for grace #0)
           dstate <= D_SWAP;
