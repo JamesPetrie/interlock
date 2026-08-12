@@ -9,11 +9,11 @@ This document describes the **certificate builder** — the top layer of the att
   key ──────────────────▶ └──────────────────┘
 ```
 
-## Latch and pairing — RSP_SYNC
+## Latch and pairing — RECOMP
 
 Each `overall` input is a **pulse sink**: latched off its valid pulse, with no handshake — an `overall` arrives once per certificate period (~1 s), vastly longer than the HMAC plus frame drain, so the block is idle when each one lands. The nonce is sampled alongside.
 
-`RSP_SYNC` selects how the response digest is paired. `RSP_SYNC = 1` (prod design): a certificate needs both directions — emission waits for one `overall_rsp` per `overall_req`, and both are consumed per certificate. `RSP_SYNC = 0` (recomp design): the response input is a free-running sample like the nonce — the request digest alone drives emission, and the certificate carries the last-sampled value (zero before the first sample, stale between; pairing and validity semantics are the protocol layer's to define).
+`RECOMP` selects what fills the OUTWARD/RECOMP slot. `RECOMP = 0` (prod design): a certificate needs both directions — emission waits for one `overall_rsp` per `overall_req`, and both are consumed per certificate. `RECOMP = 1` (recomp design): there is no response digest at all. The request digest alone drives emission, and OUTWARD/RECOMP instead carries whether the INWARD bucket was released in the MSBit and the recomputation results in the lower bits. The recomputation result are sampled free-running like the nonce (zero before the first sample, stale between; pairing and validity semantics are the protocol layer's to define).
 
 ## Message, tag, frame
 
@@ -41,5 +41,3 @@ Load-bearing invariant: `prev_tau_q` and `bkt_start` advance on **every** `h_don
 
 - **Hardened Crypto core.** The design is currently using a crypto core for the signature implemented in the fabic. It should eventually switch to a hardened block in the FPGA chip.
 - **Reset anchor.** We might need some non-volatile memory to track run sessions.
-
-- **Recomp certificate.** By decision, the recomp core reuses this builder unchanged (`RSP_SYNC = 0`): INWARD carries the challenge-slice commitment, OUTWARD the result `(id ‖ Û)` — see `verification-protocol.md`.

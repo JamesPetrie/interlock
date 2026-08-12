@@ -44,12 +44,16 @@ The drain walker gets a frozen bank and limit, and re-emits each record as an AX
 
 The bucket boundary is signalled on the output by the re-inserted **standalone empty swap beat** when `OUTPUT_SWAP = 1`: it follows the bucket's final record, and an empty bucket still emits it (once the first tick has passed). With `OUTPUT_SWAP = 0` the boundary is not signalled at all.
 
-```
-TODO add a feature that inserts empty closing tlast beats and discards the remaining data in the bank. In case the outstanding beat is NOT already tlast=1, then an empty tlast beat needs to be inserted to close the outstanding burst. In case of OUTPUT_SWAP = 1, the bucket marker also needs to be inserted.
+The drain's deadline is the flip side of the ping-pong: the fill side takes the bank back at the next tick, so a bucket must be **fully emitted within one bucket period**. Accepting it in time is the **downstream's** responsibility — the block has no preemption or truncation path, and a drain still running at the tick is UNDEFINED behavior. Concretely the sink must absorb the drain's head start: the grace period delays the drain by `GRACE_PERIOD` cycles while ingest ran at line rate, so it must buffer that much of a bucket. Significant backpressure (PAUSE frames, link loss) breaks the contract.
 
-Note however that in case of backpressure, inserting the bucket marker can't be done reliably without downstream support (the backpressure may only release many buckets later). As a result, when OUTPUT_SWAP is needed, another downsream component must be responsible for dtecting this and discarding pending packets. (maybe add another AXI stream gate and use the grace period to detect backpressure and start dropping the packets. The dropping must last util the bucket marker is observed)
-```
-The drain's deadline is the flip side of the ping-pong: the fill side takes the bank back at the next tick, so a bucket must be **fully emitted within one bucket period**. A significant backpressure (PAUSE frames, link loss) preventing this is not currently handled by the design and results in UNDEFINED behavior.
+## Release gate and bucket retention
+
+Two optional controls let the consumer pace the drain. Both are inert with the gate held open and the bucket acknowledged every cycle, which is the default tie-off configuration.
+
+- **Release gate** (`rd_gate_en`, latched on `rd_gate_en_valid`): a bucket drains only while the gate is enabled.
+- **Bucket retention** (`bkt_ack`, `bkt_replay`): a drain start **locks** the bucket. While locked the banks stop swapping and the fill side discards each period's traffic in place, preserving the drained bucket and its limit; `bkt_replay` re-walks it identically at the next grace boundary. `bkt_ack` clears the lock and normal ping-pong resumes.
+
+The lock changes state only **at a tick** — an ack arriving mid-period is latched and consumed there — so the fill and drain bank selectors stay in lockstep whenever the ack lands. A locked period still emits its trailing swap beat under `OUTPUT_SWAP = 1`, so the boundary cadence on the output is unbroken whether or not a bucket drained.
 
 ## Sizing
 

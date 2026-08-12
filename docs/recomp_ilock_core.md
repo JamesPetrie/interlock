@@ -15,7 +15,7 @@ MAC0──▶ │   eth    │─▶│ canon proc │───▶│   traffic 
 FIFO    │ deframe  │  │ + drop*    │    │   commit   │  │  buf fer  │    │  feed      │  │ reframe  │    FIFO
         └──────────┘  └────────────┘    └──────┬─────┘  └─────│─────┘    └─────┬──────┘  └──────────┘
 tuser:                      │      len@beat#0  │  len@beat#0       len@beat#0  │  ▲  len@beat#0
-                            │     swap(inline) │ swap(inline) │                │  │
+                            │     swap(inline) │ swap(inline) │   swap(inline) │  │
                            s│                  │                               │  │
                            y│                  │              │                │  │
                            n│                  │  ┌────────────────────────────┘  │
@@ -38,26 +38,34 @@ Port 0 faces the **prover frontend**, port 1 the **recomputation enclosure**; fo
 
 The frontend's side of the contract:
 
-- stage the challenge slice as canonical packets — the context, then the **CTRL marker** (a header-only `ID = 0` packet), then the challenged response — and keep any other `ID = 0` packet out of the slice;
-- carry the **challenge nonce** in the CTRL marker's `KEY_COMMIT` field: the same packet arms the response capture and latches the nonce for the certificate;
+- stage the challenge slice as canonical packets — the **challenged response first**, then its context into a single bucket. That position is the whole of what identifies the challenged packet, so no other data packet may precede it;
+- carry the **challenge nonce** in a **NONCE marker** (a header-only `ID = 0` packet) and the **expected slice commitment** in an **EXP marker** (a header-only `ID = 1` packet), both in `KEY_COMMIT`. Both are **consumed, not forwarded** — the reserved IDs fail admission while their fields still latch — so they may sit anywhere inside or before the bucket, and neither enters the digest it arms;
 - stamp the **current bucket** — sync packets arrive back on port 0 for calibration, and bucket integrity gates admission;
 - hold staging while a challenge runs: packets arriving mid-challenge are committed upstream but dropped whole by the feed, so a violation reads as lost packets in the digest, never as corrupted framing;
 
+LIMITATION: Because a slice occupies a whole bucket, the 320 KB bank is a flat cap of **~320 KB per challenge slice**.
+
 ## Ingress path
 
-The ingress is `deframe → canon_proc → drop gate → traffic_commit → batch_buffer` — so the slice is checked, committed, and bucketed exactly as the original traffic was. That reuse is what makes the slice commitment comparable: the verifier recomputes the same hierarchy from the opened production records and checks equality (see the protocol's Option 1).
+The ingress is `deframe → canon_proc → drop gate → traffic_commit → batch_buffer` — so the slice is checked, committed, and bucketed exactly as the original traffic was. That reuse is what makes the slice commitment comparable: the verifier recomputes the same hierarchy from the opened production records and checks equality (see the protocol's Option 1). `canon_proc` runs in recomputation mode: content checks off — the slice replays recorded IDs rather than fresh ones — and admission restricted to inference packets.
+
+Release, however, is **gated on the slice commitment**. The interlock stages the whole challenge, checks it is bit-identical to what the EXP marker promised, and only then hands it on. An incomplete, reordered or altered challenge therefore never reaches the enclosure, closing the covert channel a partially-staged challenge would open between the prover frontend and the recomputation enclosure.
+
+Note: An armed expectation is not consumed by the release, but it cannot open a second bucket either: every packet carries `BUCKET` in its header, so the same payloads staged a bucket later hash differently and cannot reproduce the armed digest. An empty bucket can repeat a digest, but an empty bank is never drained.
+
+A released bucket is then **retained** until the challenge dispatches `Û`, so a challenge-level retry can replay the same bytes from the buffer.
 
 ## Recomputation loop
 
 ```
 TODO handle drop flag from estimate eth_deframe
 ```
-`recomp_feed` forwards context packets verbatim to the enclosure-facing reframe, the CTRL marker forwards too (it is the recomputation START trigger), and the challenged response is captured and fed back token-by-token against the enclosure's estimates, accumulating `Û`. The estimate return path is port 1's deframe feeding the estimate port directly; its truncation flag is unused — a malformed estimate frame is charged `PROB_MIN` regardless.
+`recomp_feed` takes the bucket's first packet as the challenged response — capturing its payload and forwarding only a sanitized, payload-less header — then forwards the context verbatim and feeds the captured tokens back one at a time against the enclosure's estimates, accumulating `Û`. The estimate return path is port 1's deframe feeding the estimate port directly; its truncation flag is unused — a malformed estimate frame is charged `PROB_MIN` regardless.
 
 ## Attestation and egress
 
-A single `cert_build` runs with `RSP_SYNC = 0`: certificates follow the ingress digest cadence — INWARD carries the challenge-slice commitment, OUTWARD the last-dispatched `(id ‖ Û)` (zero before the first challenge, stale between) — and NONCE echoes the CTRL marker's `KEY_COMMIT`. The frontend egress is prod's mux with the packet input tied off: certificates on the default grant, sync packets on the priority input, reframed toward port 0. The device keeps the production timeline machinery — buckets, sync, certificate tiling — by decision; the protocol pins this layout and moves the H1/H2 checks to the verifier.
+A single `cert_build` in recomputation mode, see verification-protocol.md for the field assignments. The frontend egress is prod's mux with the packet input tied off: certificates on the default grant, sync packets on the priority input, reframed toward port 0. The device keeps the production timeline machinery — buckets, sync, certificate tiling — by decision; the protocol pins this layout and moves the H1/H2 checks to the verifier.
 
 ## Shared bucket clock
 
-A single free-running timer paces the whole device: `TIMER_END = 79_999` → a 1 ms bucket at the 80 MHz fabric clock, `BKTS_PER_CERT = 1000` → one certificate per second. (REVISIT: the RTL currently carries a testing override — `TIMER_END = 7_999_999`, `BKTS_PER_CERT = 10` → 100 ms buckets, same 1 s certificate. The 320 KB buffer bank is sized for the 1 ms bucket, so the frontend must pace the challenge slice to under ~320 KB per bucket (~26 Mb/s sustained); beyond that the bank abandons records that are already folded into the slice commitment, so the certificate stops matching what reaches `recomp_feed`.) Its tick fans out to canon (bucket check, marker insertion, sync emission) and buffer (bank swap); every bucket index in the device derives from this one counter. The buffers' grace periods absorb upstream tail: 2000 cycles.
+A single free-running timer paces the whole device, configured by one parameter: `BKT_MS`, the bucket period in milliseconds, from which the tick period and the buckets-per-certificate count derive. Unlike production this core runs **one bucket per certificate** — `BKT_MS = 1000`, a 1 s bucket — which is what lets the release gate compare against a digest covering exactly the bucket it is deciding on. Its tick fans out to canon (bucket check, marker insertion, sync emission) and buffer (bank swap); every bucket index in the device derives from this one counter. The buffers' grace periods absorb upstream tail: 2000 cycles.
