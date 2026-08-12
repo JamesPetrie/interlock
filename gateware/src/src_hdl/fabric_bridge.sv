@@ -262,7 +262,10 @@ module fabric_bridge
     .tick     (tick),
     .timer    (timer),
     .rd_gate_en_valid (1'b1),
-    .rd_gate_en       (1'b1)
+    .rd_gate_en       (1'b1),
+    // bucket retry unused in prod: constant ack keeps the lock clear
+    .bkt_ack          (1'b1),
+    .bkt_replay       (1'b0)
   );
 
   // 2×1 request-egress mux: forwarded requests (port 0, default grant) +
@@ -416,7 +419,10 @@ module fabric_bridge
     .tick     (tick),
     .timer    (timer),
     .rd_gate_en_valid (1'b1),
-    .rd_gate_en       (1'b1)
+    .rd_gate_en       (1'b1),
+    // bucket retry unused in prod: constant ack keeps the lock clear
+    .bkt_ack          (1'b1),
+    .bkt_replay       (1'b0)
   );
 
   wire         rsp_tvalid_o, rsp_tready_o, rsp_tlast_o;

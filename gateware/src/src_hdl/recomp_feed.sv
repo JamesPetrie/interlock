@@ -33,6 +33,10 @@ module recomp_feed
   // Timer ticks for re-try feature
   input  wire        tick,
 
+  // Bucket retry control: re-issue the retained bucket for a full challenge
+  // retry
+  output wire        bkt_replay,
+
   // Entropy result dispatch
   output wire        out_valid,
   output wire [63:0] id_out,
@@ -246,6 +250,12 @@ module recomp_feed
 
   wire timeout = (timeout_cnt == '0);
 
+  // bucket replay request, raised for one cycle by the challenge-level retry
+  // branches
+  logic bkt_replay_r;
+  assign bkt_replay = bkt_replay_r;
+
+
   // ------------------------------------------------------------------
   // Sequential
   // ------------------------------------------------------------------
@@ -269,7 +279,11 @@ module recomp_feed
       p_score    <= '0;
       u_acc      <= '0;
       timeout_cnt <= TIMEOUT_TICKS;
+      bkt_replay_r <= 1'b0;
     end else begin
+      // single-cycle by default; the challenge-level retry branches below
+      // raise it to have batch_buffer re-issue the retained bucket
+      bkt_replay_r <= 1'b0;
 
       // ingress beat counter (shared across all states)
       if (in_fire) begin
@@ -332,7 +346,8 @@ module recomp_feed
           if (est_done) begin
             state <= TIME_EST;
           end else begin // timeout
-            state <= ALIGN;
+            state      <= ARMED; // must skip ALIGN to be able to immpediately accept a re-try
+            bkt_replay_r <= 1'b1;
           end
           timeout_cnt <= TIMEOUT_TICKS;
         end else if (tick) begin
@@ -344,7 +359,8 @@ module recomp_feed
             // skip the token loop if the payload is empty
             state <= state_t'( (tok_total != 0) ? TOK_EST : DISPATCH );
           end else begin // timeout
-            state <= ALIGN;
+            state      <= ARMED; // must skip ALIGN to be able to immpediately accept a re-try
+            bkt_replay_r <= 1'b1;
           end
           timeout_cnt <= TIMEOUT_TICKS;
         end else if (tick) begin
@@ -358,7 +374,8 @@ module recomp_feed
             state <= state_t'( (idx < tok_total-1) ? EMIT : DISPATCH );  // tok_total must not be 0 here
           end else begin // timeout
             if (idx == 0) begin // no reveal yet, do full retry
-              state <= ALIGN;
+              state      <= ARMED; // must skip ALIGN to be able to immpediately accept a re-try
+              bkt_replay_r <= 1'b1;
             end else begin // reveal already happened, only do token-level retry
               idx <= idx - 1'b1; // rewind to the previous token
               state <= EMIT;     // re-emit the reveal
