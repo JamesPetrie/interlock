@@ -282,6 +282,8 @@ module recomp_feed
         //      response — left on the port for CHL to take from beat #0 ----
         ARMED: if (tvalid_s && !swap_beat) begin
           state <= CHL;
+          idx   <= '0;
+          u_acc <= '0;
         end
 
         // ---- the challenged response: header beats into the register
@@ -322,23 +324,46 @@ module recomp_feed
           state <= LEN_EST;
         end
 
+        // Estimate states: LEN_EST, TIME_EST, TOK_EST
+        // Note: each estimate state uses a shared timeout counter
+
         // ---- initial estimates: length, then timing ----
-        LEN_EST: if (est_done) begin
-          state <= TIME_EST;
+        LEN_EST: if (est_done || timeout) begin
+          if (est_done) begin
+            state <= TIME_EST;
+          end else begin // timeout
+            state <= ALIGN;
+          end
+          timeout_cnt <= TIMEOUT_TICKS;
+        end else if (tick) begin
+          timeout_cnt <= timeout_cnt - 1'b1;
         end
 
-        TIME_EST: if (est_done) begin
-          // skip the token loop if the payload is empty
-          state <= state_t'( (tok_total != 0) ? TOK_EST : DISPATCH );
+        TIME_EST: if (est_done || timeout) begin
+          if (est_done) begin
+            // skip the token loop if the payload is empty
+            state <= state_t'( (tok_total != 0) ? TOK_EST : DISPATCH );
+          end else begin // timeout
+            state <= ALIGN;
+          end
+          timeout_cnt <= TIMEOUT_TICKS;
+        end else if (tick) begin
+          timeout_cnt <= timeout_cnt - 1'b1;
         end
 
         // ---- one estimate → reveal the next token, or finish once the buffer is exhausted ----
         TOK_EST: if (est_done || timeout) begin
-          if (!est_done && idx != '0) begin // TODO IDX = 0 will do a full retry instead
-            idx <= idx - 1'b1;
+          if (est_done) begin
+            // do another reveal, unless the last one is reached (no need to reveal the last)
+            state <= state_t'( (idx < tok_total-1) ? EMIT : DISPATCH );  // tok_total must not be 0 here
+          end else begin // timeout
+            if (idx == 0) begin // no reveal yet, do full retry
+              state <= ALIGN;
+            end else begin // reveal already happened, only do token-level retry
+              idx <= idx - 1'b1; // rewind to the previous token
+              state <= EMIT;     // re-emit the reveal
+            end
           end
-          // do another reveal, unless the last one is reached (no need to reveal the last)
-          state <= state_t'( (!est_done || (idx < tok_total-1)) ? EMIT : DISPATCH );  // tok_total must not be 0 here
           timeout_cnt <= TIMEOUT_TICKS;
         end else if (tick) begin
           timeout_cnt <= timeout_cnt - 1'b1;
@@ -352,8 +377,6 @@ module recomp_feed
         // ---- feeding complete: wait out the final frame's scoring, then
         //      dispatch Û (one-cycle pulse) and re-align ----
         DISPATCH: if (out_valid) begin
-          idx   <= '0;
-          u_acc <= '0;
           state <= ALIGN;
         end
 
