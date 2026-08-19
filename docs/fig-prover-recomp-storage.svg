@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ae" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+    </marker>
+    <marker id="as" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto-start-reverse">
+      <polygon points="0 0, 8 3, 0 6" fill="#333"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="white"/>
+
+  <!-- isolation boundary: interlock straddles its left edge, storage tap its bottom edge -->
+  <rect x="520" y="30" width="400" height="178" rx="10" fill="none" stroke="#9a9aa2" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="740" y="47" text-anchor="middle" font-size="10" fill="#9a9aa2">isolation boundary</text>
+
+  <!-- workload track -->
+  <text x="30" y="40" text-anchor="start" font-size="10" fill="#888">WORKLOAD</text>
+  <rect x="20" y="60" width="160" height="60" rx="6" fill="#f4eefb" stroke="#7a4aa8"/>
+  <text x="100" y="95" text-anchor="middle" font-size="13" font-weight="bold" fill="#3d1d5c">Verifier</text>
+
+  <rect x="250" y="60" width="160" height="60" rx="6" fill="#eef4fb" stroke="#4a78a8"/>
+  <text x="330" y="95" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d3d5c">Prover frontend</text>
+
+  <rect x="480" y="60" width="160" height="60" rx="6" fill="#fdf3e7" stroke="#b07c3a"/>
+  <text x="560" y="95" text-anchor="middle" font-size="13" font-weight="bold" fill="#5c3d1d">Interlock</text>
+
+  <rect x="710" y="60" width="160" height="60" rx="6" fill="#eefbef" stroke="#3a8a4a"/>
+  <text x="790" y="88" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d5c2a">Prover compute</text>
+  <text x="790" y="105" text-anchor="middle" font-size="9" fill="#3a8a4a">volatile — wiped</text>
+
+  <line x1="180" y1="90" x2="250" y2="90" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+  <text x="215" y="78" text-anchor="middle" font-size="10" fill="#333">challenge,</text>
+  <text x="215" y="110" text-anchor="middle" font-size="10" fill="#333">certs + U</text>
+  <line x1="410" y1="90" x2="480" y2="90" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+  <line x1="640" y1="90" x2="710" y2="90" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+
+  <!-- KV offload track -->
+  <line x1="790" y1="120" x2="790" y2="175" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+  <text x="782" y="140" text-anchor="end" font-size="10" fill="#333">writes (OUTWARD)</text>
+  <text x="782" y="154" text-anchor="end" font-size="10" fill="#333">restores (INWARD)</text>
+
+  <rect x="700" y="175" width="180" height="65" rx="6" fill="#fdf3e7" stroke="#b07c3a"/>
+  <text x="790" y="200" text-anchor="middle" font-size="13" font-weight="bold" fill="#5c3d1d">Storage tap</text>
+  <text x="790" y="223" text-anchor="middle" font-size="9" fill="#8a6a3a">both logs committed</text>
+
+  <line x1="790" y1="240" x2="790" y2="290" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+
+  <rect x="700" y="290" width="180" height="65" rx="6" fill="#eef4fb" stroke="#4a78a8"/>
+  <text x="790" y="315" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d3d5c">KV store</text>
+  <text x="790" y="333" text-anchor="middle" font-size="9" fill="#4a78a8">prover-owned · never wiped</text>
+
+  <!-- recomputation track -->
+  <text x="30" y="405" text-anchor="start" font-size="10" fill="#888">RECOMPUTATION</text>
+  <rect x="480" y="425" width="160" height="60" rx="6" fill="#fdf3e7" stroke="#b07c3a"/>
+  <text x="560" y="452" text-anchor="middle" font-size="13" font-weight="bold" fill="#5c3d1d">Recomp interlock</text>
+  <text x="560" y="469" text-anchor="middle" font-size="9" fill="#8a6a3a">scores token + KV challenges</text>
+
+  <rect x="695" y="400" width="200" height="100" rx="8" fill="none" stroke="#3a8a4a" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="795" y="417" text-anchor="middle" font-size="10" fill="#3a8a4a">verifier enclosure</text>
+  <rect x="710" y="425" width="170" height="60" rx="6" fill="#eefbef" stroke="#3a8a4a"/>
+  <text x="795" y="460" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d5c2a">Recomp compute</text>
+
+  <polyline points="330,120 330,455 480,455" fill="none" stroke="#333" marker-end="url(#ae)"/>
+  <text x="404" y="445" text-anchor="middle" font-size="10" fill="#333">challenged pair</text>
+
+  <polyline points="700,225 620,225 620,425" fill="none" stroke="#333" marker-end="url(#ae)"/>
+  <text x="612" y="326" text-anchor="end" font-size="10" fill="#333">challenged chunk</text>
+  <text x="612" y="340" text-anchor="end" font-size="10" fill="#333">(restore / write)</text>
+
+  <line x1="640" y1="455" x2="710" y2="455" stroke="#333" marker-start="url(#as)" marker-end="url(#ae)"/>
+</svg>
