@@ -1,0 +1,21 @@
+# The hardware button panel: two momentary buttons and two LEDs on the Pi's
+# header, driving the demo over plain HTTP. Wiring: docs/BUTTON-PANEL.md.
+# Safe to run unwired -- the button lines idle high on internal pull-ups.
+[Unit]
+Description=Interlock demo button panel (GPIO buttons + LEDs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/rpi/fpe
+ExecStart=/usr/bin/python3 -u pi_button_panel.py
+Restart=always
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=interlock-buttons
+
+[Install]
+WantedBy=multi-user.target

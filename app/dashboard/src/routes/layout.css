@@ -1,0 +1,553 @@
+/* Initialised from https://www.shadcn-svelte.com/create/preview?preset=bKbbYqcie */
+
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/geist-mono/wght.css';
+
+@custom-variant dark (&:is(.dark *));
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+/* ---------------------------------------------------------------------------
+ * Instrument palette.
+ *
+ * The subject is a device clamped onto a wire, measuring signals. So the page is
+ * dressed as lab instrumentation rather than a dashboard: graphite ground, hairline
+ * rules, tight 2px corners, tabular figures, and a single cyan reserved for the
+ * live signal path. Nothing else in the chrome is allowed to use the accent --
+ * when the cyan moves, that is real traffic on a real cable.
+ *
+ * The one exception is the fingerprint register, which is a picture of three
+ * pieces of film rather than chrome. Its three have to stay tellable apart while
+ * they slide over each other, and three greens would be three greens, so it
+ * carries its own lime/cyan/violet -- the same three as /lab, so the bench and the
+ * demo are talking about one picture. See fingerprint-register.svelte.
+ *
+ * Deliberately single-theme. This runs on a projector in a dim room, and a light
+ * variant of an instrument face is a different design, not a recolour. The values
+ * sit on :root rather than .dark so the page renders identically whatever the
+ * viewer's system preference is.
+ * ------------------------------------------------------------------------- */
+:root {
+	--background: oklch(0.16 0.017 258);
+	--foreground: oklch(0.94 0.008 250);
+	--card: oklch(0.203 0.019 258);
+	--card-foreground: var(--foreground);
+	--popover: oklch(0.203 0.019 258);
+	--popover-foreground: var(--foreground);
+
+	--primary: oklch(0.82 0.145 205);
+	--primary-light: oklch(0.88 0.1 205);
+	--primary-foreground: oklch(0.16 0.017 258);
+
+	--secondary: oklch(0.26 0.02 258);
+	--secondary-foreground: var(--foreground);
+	--muted: oklch(0.245 0.019 258);
+	--muted-foreground: oklch(0.66 0.021 254);
+	--accent: oklch(0.26 0.02 258);
+	--accent-foreground: var(--foreground);
+
+	--destructive: oklch(0.68 0.2 22);
+	--border: oklch(0.315 0.022 256);
+	--input: oklch(0.315 0.022 256);
+	--ring: oklch(0.82 0.145 205);
+
+	/* instrument semantics -- distinct from the accent on purpose */
+	--signal: oklch(0.82 0.145 205);
+	--verified: oklch(0.82 0.17 163);
+	--caution: oklch(0.83 0.14 82);
+	--fault: oklch(0.68 0.2 22);
+	--grid: oklch(0.245 0.019 258);
+
+	--chart-1: var(--signal);
+	--chart-2: var(--verified);
+	--chart-3: var(--caution);
+	--chart-4: oklch(0.5 0.02 258);
+	--chart-5: oklch(0.36 0.02 258);
+	--radius: 0.14rem;
+	--sidebar: oklch(0.203 0.019 258);
+	--sidebar-foreground: var(--foreground);
+	--sidebar-primary: var(--signal);
+	--sidebar-primary-foreground: oklch(0.16 0.017 258);
+	--sidebar-accent: oklch(0.26 0.02 258);
+	--sidebar-accent-foreground: var(--foreground);
+	--sidebar-border: oklch(0.315 0.022 256);
+	--sidebar-ring: var(--signal);
+}
+
+.dark {
+	/* single-theme: .dark inherits :root, see the note above */
+}
+
+@theme inline {
+	--font-sans: 'Inter Variable', sans-serif;
+	--font-heading: 'Inter Variable', sans-serif;
+	--font-mono: 'Geist Mono Variable', monospace;
+	--color-sidebar-ring: var(--sidebar-ring);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar: var(--sidebar);
+	--color-signal: var(--signal);
+	--color-verified: var(--verified);
+	--color-caution: var(--caution);
+	--color-fault: var(--fault);
+	--color-grid: var(--grid);
+	--color-chart-5: var(--chart-5);
+	--color-chart-4: var(--chart-4);
+	--color-chart-3: var(--chart-3);
+	--color-chart-2: var(--chart-2);
+	--color-chart-1: var(--chart-1);
+	--color-ring: var(--ring);
+	--color-input: var(--input);
+	--color-border: var(--border);
+	--color-destructive: var(--destructive);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent: var(--accent);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary: var(--secondary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: var(--primary);
+	--color-primary-light: var(--primary-light);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-popover: var(--popover);
+	--color-card-foreground: var(--card-foreground);
+	--color-card: var(--card);
+	--color-foreground: var(--foreground);
+	--color-background: var(--background);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ---------------------------------------------------------------------------
+ * Briefcase scale.
+ *
+ * This runs on a panel in the lid of a case: read standing up, from a few feet,
+ * by people seeing it for the first time. So the page is an appliance -- one
+ * screen, no scroll, nothing on it that needs explaining -- and the type is sized
+ * off the viewport instead of being fixed, so the same layout holds on a 10-inch
+ * lid and on a projector.
+ *
+ * These are deliberately unlayered, so they win over Tailwind's text-* utilities.
+ * Do not put both on one element; pick one.
+ * ------------------------------------------------------------------------- */
+.t-hero {
+	font-size: clamp(1.45rem, 2.9vw, 3rem);
+	line-height: 1.08;
+}
+.t-big {
+	font-size: clamp(1.4rem, 3vw, 3.2rem);
+	line-height: 1.02;
+}
+.t-lead {
+	font-size: clamp(1rem, 1.7vw, 1.85rem);
+	line-height: 1.25;
+}
+.t-body {
+	font-size: clamp(0.85rem, 1.1vw, 1.2rem);
+	line-height: 1.35;
+}
+.t-tag {
+	font-size: clamp(0.78rem, 0.95vw, 1.1rem);
+	letter-spacing: 0.16em;
+}
+
+/* ---------------------------------------------------------------------------
+ * Motion.
+ *
+ * Four things move, and each of them is saying something: the cable carries a
+ * flow while there is traffic on it, the datacenter sweeps while it is working,
+ * the verdict blooms when it lands, and the idle PROMPT button breathes so an
+ * unattended case still reads as "press this". Everything else is still.
+ * ------------------------------------------------------------------------- */
+@keyframes ilk-flow {
+	to {
+		background-position: 96px 0;
+	}
+}
+@keyframes ilk-sweep {
+	0% {
+		transform: translateY(-100%);
+	}
+	100% {
+		transform: translateY(400%);
+	}
+}
+@keyframes ilk-bloom {
+	from {
+		transform: scale(0.94);
+		opacity: 0;
+	}
+	to {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+@keyframes ilk-breathe {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 transparent;
+	}
+	50% {
+		box-shadow: 0 0 22px -4px var(--signal);
+	}
+}
+.ilk-flow {
+	background-image: repeating-linear-gradient(
+		90deg,
+		color-mix(in oklab, var(--signal) 85%, transparent) 0 14px,
+		transparent 14px 48px
+	);
+	animation: ilk-flow 1.15s linear infinite;
+}
+.ilk-sweep {
+	animation: ilk-sweep 1.9s ease-in-out infinite;
+}
+.ilk-bloom {
+	animation: ilk-bloom 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.ilk-breathe {
+	animation: ilk-breathe 2.8s ease-in-out infinite;
+}
+/* The combine hunting: while the prover runs, the two sliding films rake up and
+ * down against the model backing, out of phase with each other so the stack
+ * visibly refuses to resolve. Dropping the class transitions them home. */
+.ilk-hunt-a {
+	animation: ilk-hunt-a 1.7s linear infinite;
+}
+.ilk-hunt-b {
+	animation: ilk-hunt-b 2.2s linear infinite;
+}
+/* The hunt is a pure sine, sampled densely onto LINEAR timing: velocity is
+ * continuous through every reversal, so the raking reads as glass-smooth
+ * sliding rather than steps. Cycles begin and end at rest; the sheets carry
+ * a transform transition so the residue glides home when the hunt stops. */
+@keyframes ilk-hunt-a {
+	0% {
+		transform: translateY(-0.00%);
+	}
+	5% {
+		transform: translateY(-9.27%);
+	}
+	10% {
+		transform: translateY(-17.63%);
+	}
+	15% {
+		transform: translateY(-24.27%);
+	}
+	20% {
+		transform: translateY(-28.53%);
+	}
+	25% {
+		transform: translateY(-30.00%);
+	}
+	30% {
+		transform: translateY(-28.53%);
+	}
+	35% {
+		transform: translateY(-24.27%);
+	}
+	40% {
+		transform: translateY(-17.63%);
+	}
+	45% {
+		transform: translateY(-9.27%);
+	}
+	50% {
+		transform: translateY(-0.00%);
+	}
+	55% {
+		transform: translateY(9.27%);
+	}
+	60% {
+		transform: translateY(17.63%);
+	}
+	65% {
+		transform: translateY(24.27%);
+	}
+	70% {
+		transform: translateY(28.53%);
+	}
+	75% {
+		transform: translateY(30.00%);
+	}
+	80% {
+		transform: translateY(28.53%);
+	}
+	85% {
+		transform: translateY(24.27%);
+	}
+	90% {
+		transform: translateY(17.63%);
+	}
+	95% {
+		transform: translateY(9.27%);
+	}
+	100% {
+		transform: translateY(0.00%);
+	}
+}
+@keyframes ilk-hunt-b {
+	0% {
+		transform: translateY(0.00%);
+	}
+	5% {
+		transform: translateY(10.82%);
+	}
+	10% {
+		transform: translateY(20.57%);
+	}
+	15% {
+		transform: translateY(28.32%);
+	}
+	20% {
+		transform: translateY(33.29%);
+	}
+	25% {
+		transform: translateY(35.00%);
+	}
+	30% {
+		transform: translateY(33.29%);
+	}
+	35% {
+		transform: translateY(28.32%);
+	}
+	40% {
+		transform: translateY(20.57%);
+	}
+	45% {
+		transform: translateY(10.82%);
+	}
+	50% {
+		transform: translateY(0.00%);
+	}
+	55% {
+		transform: translateY(-10.82%);
+	}
+	60% {
+		transform: translateY(-20.57%);
+	}
+	65% {
+		transform: translateY(-28.32%);
+	}
+	70% {
+		transform: translateY(-33.29%);
+	}
+	75% {
+		transform: translateY(-35.00%);
+	}
+	80% {
+		transform: translateY(-33.29%);
+	}
+	85% {
+		transform: translateY(-28.32%);
+	}
+	90% {
+		transform: translateY(-20.57%);
+	}
+	95% {
+		transform: translateY(-10.82%);
+	}
+	100% {
+		transform: translateY(-0.00%);
+	}
+}
+/* The landing: a one-shot glide from the peak a sheet was released at down
+ * to true register. The release happens exactly at a swing peak (velocity
+ * zero), and --land-from is set to that same peak, so the handoff from the
+ * infinite hunt to this landing is continuous by construction -- no reliance
+ * on the browser transitioning away from a removed animation. */
+.ilk-land {
+	animation: ilk-land 1100ms cubic-bezier(0.45, 0, 0.25, 1) both;
+}
+@keyframes ilk-land {
+	from {
+		transform: translateY(var(--land-from, 0%));
+	}
+	to {
+		transform: translateY(0%);
+	}
+}
+
+/* the settled composite fading in over the landed sheets */
+.ilk-fadein {
+	animation: ilk-fadein 600ms ease both;
+}
+@keyframes ilk-fadein {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+/* the verdict sentence flies in as the pile departs */
+.ilk-flyin {
+	animation: ilk-flyin 900ms 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes ilk-flyin {
+	from {
+		opacity: 0;
+		transform: translateY(3cqw);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* the processing bar: a gold segment chewing back and forth along the sealed
+ * request while the model turns it into the response */
+
+/* A physical spring for things that MOVE -- but a PROFESSIONAL one: damping
+ * ratio 0.9, near-critical, so motion settles like a precise instrument with
+ * no visible bounce. Sampled from a mass-spring-damper into linear().
+ * Unlayered on purpose, so it wins over Tailwind's ease-* utilities. */
+:root {
+	--spring: linear(0, 0.0303, 0.1035, 0.1991, 0.3033, 0.4068, 0.5042, 0.5923, 0.6697, 0.7361, 0.7921, 0.8383, 0.8761, 0.9064, 0.9304, 0.9491, 0.9636, 0.9746, 0.9828, 0.9889, 0.9932, 0.9963, 0.9984, 0.9998, 1.0007, 1.0012, 1.0015, 1.0015, 1.0015, 1.0014, 1);
+}
+.ilk-spring {
+	transition-timing-function: var(--spring);
+}
+
+.ilk-proc {
+	background: linear-gradient(90deg, transparent, var(--caution), transparent);
+	background-size: 45% 100%;
+	background-repeat: no-repeat;
+	animation: ilk-proc 1.2s ease-in-out infinite alternate;
+}
+@keyframes ilk-proc {
+	from {
+		background-position: -30% 0;
+	}
+	to {
+		background-position: 130% 0;
+	}
+}
+
+/* On a short panel the pile is what has to survive. The per-sheet previews are the
+ * secondary graphic, and under 720px they were taking a third of the register's
+ * height away from the picture they exist to illustrate. */
+@media (max-height: 719px) {
+	.fp-strip {
+		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ilk-flow,
+	.ilk-sweep,
+	.ilk-bloom,
+	.ilk-breathe,
+	.ilk-hunt-a,
+	.ilk-hunt-b,
+	.ilk-land,
+	.ilk-proc {
+		animation: none;
+	}
+	.ilk-flyin,
+	.ilk-fadein {
+		animation: none;
+		opacity: 1;
+	}
+	.ilk-sweep {
+		display: none;
+	}
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	body {
+		@apply bg-background text-foreground;
+	}
+	html {
+		@apply font-sans;
+		color-scheme: dark;
+	}
+	/* Instruments line their digits up. */
+	.tabular,
+	code,
+	kbd,
+	samp {
+		font-variant-numeric: tabular-nums;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+ * Power-off. A CRT dying: the lit field collapses to a scanline, the scanline
+ * to a point, and a faint power glyph breathes while the machines actually
+ * halt -- the page going dark mid-breath IS the confirmation.
+ * ------------------------------------------------------------------------- */
+@keyframes ilk-crtoff {
+	0% {
+		transform: scale(1, 1);
+		opacity: 1;
+	}
+	45% {
+		transform: scale(1, 0.006);
+		opacity: 1;
+	}
+	65% {
+		transform: scale(0.5, 0.004);
+	}
+	100% {
+		transform: scale(0.002, 0.002);
+		opacity: 0.9;
+	}
+}
+.ilk-crt {
+	position: absolute;
+	inset: 0;
+	transform-origin: 50% 50%;
+	background: radial-gradient(
+		ellipse at center,
+		color-mix(in oklab, var(--signal) 60%, white) 0%,
+		color-mix(in oklab, var(--signal) 25%, var(--background)) 55%,
+		var(--background) 100%
+	);
+	animation: ilk-crtoff 850ms cubic-bezier(0.55, 0, 0.85, 0.4) both;
+}
+@keyframes ilk-powerpulse {
+	0%,
+	100% {
+		opacity: 0.1;
+	}
+	50% {
+		opacity: 0.32;
+	}
+}
+.ilk-powerglyph {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: clamp(40px, 5vw, 72px);
+	transform: translate(-50%, -50%);
+	color: var(--muted-foreground);
+	opacity: 0;
+	animation: ilk-powerpulse 2.6s ease-in-out 1.2s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.ilk-crt {
+		animation: none;
+		opacity: 0;
+	}
+	.ilk-powerglyph {
+		animation: none;
+		opacity: 0.25;
+	}
+}

@@ -28,10 +28,6 @@ set_iobank -bank_name Bank4  \
 # User Locked I/O settings
 # 
 
-set_io -port_name LINK_OK  \
-    -pin_name D25          \
-    -fixed true            \
-    -DIRECTION OUTPUT
 
 
 set_io -port_name PHY_MDC  \
@@ -55,7 +51,7 @@ set_io -port_name PHY_RST  \
     -DIRECTION OUTPUT
 
 
-set_io -port_name RD_BC_ERROR  \
+set_io -port_name PKT_LED_1  \
     -pin_name F22              \
     -fixed true                \
     -DIRECTION OUTPUT
@@ -68,7 +64,49 @@ set_io -port_name PKT_LED  \
     -DIRECTION OUTPUT
 
 
-# Port 1 SGMII pair — second VSC8575 RJ45 (J20).  Same Bank 4 as Port 0.
+# Retired debug LEDs, held low. Assigned rather than dropped: an
+# unassigned pin leaves its LED lit (see top.tcl). io_std is left
+# unspecified to match PKT_LED/PKT_LED_1, which resolve to the bank
+# default (LVCMOS18) the same way.
+set_io -port_name LED_OFF_D25  \
+    -pin_name D25              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_OFF_C26  \
+    -pin_name C26              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_OFF_C27  \
+    -pin_name C27              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_OFF_F23  \
+    -pin_name F23              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_OFF_H22  \
+    -pin_name H22              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_OFF_H21  \
+    -pin_name H21              \
+    -fixed true               \
+    -DIRECTION OUTPUT
+
+
+# Port 1 SGMII pair -- second VSC8575 RJ45 (J30).  Same Bank 4 as Port 0.
+# (This said J20, which is a BGA ball name, not a jack. docs/
+# multi-port-ethernet-findings.md is authoritative: J15 = port 0, J30 = port 1.)
 # RX side uses canonical P→PB / N→NB polarity (P pin = GPIO190PB4 = AA3).
 # AN4623 Port 0 uses the inverted convention (U1=NB4 as RX_P), which is
 # accepted by Libero for that pair but rejects PDCPF-13 for this pair —
@@ -103,36 +141,14 @@ set_io -port_name TX_P_1  \
     -DIRECTION OUTPUT
 
 
-# Port 1 link-up indicator — LED_6 (C26)
-set_io -port_name LINK_OK_1  \
-    -pin_name C26            \
-    -fixed true              \
-    -DIRECTION OUTPUT
 
 
-# Sub-PR #5 debug LEDs (LED_8 … LED_11) — see top.tcl for what each shows.
-set_io -port_name LED_DBG_MTXACPT_1  \
-    -pin_name C27                    \
-    -fixed true                      \
-    -DIRECTION OUTPUT
 
 
-set_io -port_name LED_DBG_MTXACPT_0  \
-    -pin_name F23                    \
-    -fixed true                      \
-    -DIRECTION OUTPUT
 
 
-set_io -port_name LED_DBG_RCG_ERR_1  \
-    -pin_name H22                    \
-    -fixed true                      \
-    -DIRECTION OUTPUT
 
 
-set_io -port_name LED_DBG_RX1_CNT  \
-    -pin_name H21                  \
-    -fixed true                    \
-    -DIRECTION OUTPUT
 
 
 set_io -port_name REFCLK_N  \

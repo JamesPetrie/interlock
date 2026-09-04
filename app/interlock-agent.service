@@ -1,0 +1,36 @@
+# The Pi half of the demo: the resident client that owns the certified wire.
+#
+# Runs as root because pi_agent opens an AF_PACKET socket on the raw interlock
+# wire (eth0, no IP). It dials the Spark's orchestrator over the wireless AP; the
+# Socket.IO client reconnects on its own, so this does not have to wait for the
+# Spark to be up first -- if the AP is slow, or the Spark is still rebooting, the
+# agent simply keeps trying until the orchestrator answers.
+[Unit]
+Description=Interlock Pi agent (owns the certified wire, dials the orchestrator)
+Documentation=https://github.com/waynetee/interlock
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/rpi/fpe
+# --spark is the AP gateway address, which is what the Pi actually gets on the
+# Spark's shared-wireless AP; the pi_agent default (2a-spark) resolves too, but
+# the numeric address is the one demo_up.sh has always passed and is proven.
+ExecStart=/home/rpi/fpe/venv/bin/python -u pi_agent.py --iface eth0 --spark http://10.42.0.1:80
+
+# The board warms once at start (canon port + tokenizer), which can take a few
+# seconds; do not let a slow first warm be read as a failed start.
+TimeoutStartSec=120
+# Owns a raw socket and is the whole point of the Pi; a clean exit is not a reason
+# to stay down. Back off so a genuinely broken agent does not spin the CPU.
+Restart=always
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=interlock-agent
+
+[Install]
+WantedBy=multi-user.target

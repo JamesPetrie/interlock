@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="three fingerprint strips, out of register">
+  <!--
+    The mechanism, at 16 pixels: three strips of the fingerprint register, out
+    of register. Three shades of one green, the same family the films wear, and
+    each strip is a cell mosaic rather than a solid bar - the texture IS the
+    fingerprint, and the stagger is the thing the whole demo is about: they do
+    not line up until something puts them in register. Ends are anchored and
+    the punch is deterministic, so the icon is stable across regenerations.
+  -->
+  <rect width="32" height="32" rx="7" fill="#05070c"/>
+  <rect x="6.00" y="5.00" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="11.50" y="5.00" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="17.00" y="5.00" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="22.50" y="5.00" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="25.25" y="5.00" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="6.00" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="8.75" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="11.50" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="19.75" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="22.50" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="25.25" y="7.75" width="2.20" height="2.20" fill="#9ad161"/>
+  <rect x="3.00" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="8.50" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="11.25" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="14.00" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="16.75" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="19.50" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="22.25" y="13.00" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="3.00" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="5.75" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="8.50" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="11.25" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="14.00" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="16.75" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="19.50" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="22.25" y="15.75" width="2.20" height="2.20" fill="#7cc055"/>
+  <rect x="8.00" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="10.75" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="19.00" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="21.75" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="24.50" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="27.25" y="21.00" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="8.00" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="10.75" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="13.50" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="16.25" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="19.00" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="21.75" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="24.50" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+  <rect x="27.25" y="23.75" width="2.20" height="2.20" fill="#5fae4c"/>
+</svg>

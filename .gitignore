@@ -20,3 +20,18 @@ tb/**/sim_build*/
 tb/**/results.xml
 tb/**/*.vcd
 tb/**/dump.vcd
+
+# Agent/editor backups — history is the place for old versions, not the tree
+*.bak
+*.bak[0-9]
+*.bak-*
+
+# Flashable bitstreams are published on the Releases page, not committed
+*.job
+
+# one-shot beat-11 tamper flag, dropped by demo_server at runtime
+.tamper
+
+# docker mountpoint for the prover reference AES (bringup.sh -v ...prover/ref);
+# recreated root-owned on every container create, so ignore rather than fight it
+app/ref/

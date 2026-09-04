@@ -1,0 +1,29 @@
+{
+	"name": "inference-verification",
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"compatibility_flags": ["nodejs_als"],
+	"compatibility_date": "2026-06-09",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"vars": {
+		"GATEWAY_URL": "https://gateway.computeverification.org",
+		"NETWORK_LOGGER_URL": "https://networklogger.computeverification.org",
+		"MAIN_CLUSTER_URL": "https://maincluster.computeverification.org",
+		"RECOMPUTATION_CLUSTER_URL": "https://recomputationcluster.computeverification.org"
+	},
+	"observability": {
+		"enabled": false,
+		"head_sampling_rate": 1,
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+			"persist": true,
+			"invocation_logs": true
+		},
+		"traces": {
+			"enabled": false
+		}
+	}
+}

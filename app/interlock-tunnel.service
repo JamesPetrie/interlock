@@ -1,0 +1,36 @@
+# The control-plane tunnel: a reverse-ssh forward so the Pi can reach the
+# orchestrator.
+#
+# WHY THIS EXISTS. The Pi and the Spark are on the same wireless LAN, but it has
+# client isolation -- the Pi cannot open a connection to the Spark's address at
+# all. The only path between them is the Spark's OWN outbound ssh to the Pi
+# (which rides a Cloudflare tunnel). So the Spark reverse-forwards its port 80
+# onto the Pi's localhost:8770, and the Pi agent dials 127.0.0.1:8770.
+#
+# This carries the CONTROL plane only -- commands and metadata. The prompt and the
+# response still cross the certified wire; nothing here touches payload.
+[Unit]
+Description=Interlock control-plane tunnel (reverse-forward Pi:8770 -> Spark:80)
+Documentation=https://github.com/waynetee/interlock
+After=network-online.target interlock-demo.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spark
+Group=spark
+# -N: no remote command, just the forward.
+# ExitOnForwardFailure: if the reverse bind fails, fail the start so systemd
+#   retries, rather than leaving a live ssh with no working forward.
+# keepalives: notice a dropped link within ~90s and let Restart bring it back,
+#   instead of hanging half-open while the Pi quietly cannot reach the demo.
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 8770:127.0.0.1:80 2a-rpi
+Restart=always
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=interlock-tunnel
+
+[Install]
+WantedBy=multi-user.target

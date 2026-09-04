@@ -1,0 +1,69 @@
+# The demo orchestrator, owned by systemd so the case can be opened, powered on,
+# and used without anyone logging in to start anything.
+#
+# Install with app/install-service.sh, which is where the reasoning for the two
+# non-obvious choices below is spelled out at length. In short:
+#
+#   - it binds port 80 without running as root, via one ambient capability;
+#   - it deliberately does NOT sandbox privilege escalation, because the front
+#     panel's shutdown button reaches the Spark's poweroff through sudo, and
+#     NoNewPrivileges would make that permanently impossible.
+[Unit]
+Description=Interlock demo orchestrator (Socket.IO hub + dashboard)
+Documentation=https://github.com/waynetee/interlock
+# The Pi dials in over the Spark's own AP, so the network has to be up first --
+# and Wants= rather than Requires=, because a demo that refuses to start when the
+# AP is slow is worse than one that comes up and waits for the agent.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spark
+Group=spark
+WorkingDirectory=/home/spark/v2/interlock/app
+ExecStart=/home/spark/v2/VerInf/venv/bin/python -u demo_server.py --port 80
+
+# The truthful name for what the backend actually runs, shown on the front panel
+# and stamped on every verdict. It has to be kept in step BY HAND with the two
+# knobs that decide the pipeline: CHALLENGE_PY in interlock-backend.service
+# (the fast subsampled prover as deployed; unset there = the sound one) and
+# CHALLENGE_TQ in the ilk_server container (1 as deployed). Anything containing
+# the words "spot check" makes the dashboard raise its caution banner; this
+# label deliberately does not -- the key binding and the weld ARE full strength
+# in fast mode, and the lid should lead with what is proven, not hedge it.
+Environment="MODE_LABEL=fast - subsampled proof, key binding and weld at full strength"
+
+# The demo prompt. Few-shot on purpose: the worked example is what makes the
+# model's own greedy answer terse (see demo_server.PROMPT); \n becomes a real
+# newline in demo_server, because Environment= cannot carry one.
+Environment="PROMPT=Question: What is the capital of France?\nAnswer: Paris\nQuestion: What does IAEA stand for?\nAnswer:"
+
+# Port 80 is privileged and this process is not. Rather than run the whole
+# orchestrator as root to bind one socket, grant exactly the one capability that
+# binding it needs; everything else stays an ordinary spark process.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Deliberately no NoNewPrivileges= and no CapabilityBoundingSet=. Both are what
+# you would normally reach for here, and both would silently kill the front
+# panel's shut-down button: it halts the Spark through `sudo -n poweroff`, sudo
+# is setuid, and setuid is exactly what those two settings forbid. The button
+# would keep arming and confirming, the Pi would still go down, and the Spark
+# would stay up with no clue as to why. Leave them off.
+
+# Restart=always, not on-failure: the point of this unit is that the demo is up
+# whenever the machine is, and a clean exit is not a reason to stay down.
+Restart=always
+RestartSec=5s
+
+# Startup hashes the 2.2 GB weight file to produce the model fingerprint, which
+# takes a few seconds on a cold page cache. The default 90 s is close enough to
+# that to be worth widening.
+TimeoutStartSec=180
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=interlock-demo
+
+[Install]
+WantedBy=multi-user.target
