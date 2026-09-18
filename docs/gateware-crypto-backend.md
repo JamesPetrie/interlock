@@ -1,5 +1,11 @@
 # Gateware crypto backend — where the Core's SHA-256 and HMAC come from
 
+```
+TODO (James): Claude reviewed this doc (2026-09-18). It predates the current
+crypto/ cores and certificate format; update it to the current state or
+retire it.
+```
+
 Decision record for the interlock Core (the gateware version of
 `prototype/interlock.py`). The Core needs two crypto primitives:
 

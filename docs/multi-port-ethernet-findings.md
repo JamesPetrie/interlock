@@ -1,5 +1,10 @@
 # Multi-Port Ethernet Bring-Up: Findings and References
 
+```
+TODO (James): Claude reviewed this doc (2026-09-18) and thinks it should be
+updated now that we have a working version.
+```
+
 This document collects what we've learned during the multi-port (CORETSE_0
 + CORETSE_1) Ethernet bring-up on the MPF300-EVAL-KIT. Captured because
 much of this is hard to assemble from any single source — the relevant
@@ -434,7 +439,5 @@ If we're stuck after iter-3, the remaining strategic options:
 
 - `docs/firmware-iteration.md` — fast iteration via JTAG (currently not
   fully working — but useful reference for SoftConsole setup)
-- `docs/iter-3-diagnostics-DRAFT.patch` — earlier draft of the diagnostic
-  additions, now applied directly in iter-3.
 - This file (`docs/multi-port-ethernet-findings.md`) — what you're
   reading.

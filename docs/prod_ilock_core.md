@@ -57,7 +57,7 @@ The dashed boundary in the diagram is the organizing decision: the **bucket buff
 The asymmetry cascades into the drop handling:
 
 - **Request side** — `canon → gate → commit → buffer`. The commitment precedes the buffer, and it commits exactly what it forwards, so a payload-flagged packet must be squashed *before* it: that is the sole purpose of the separate `axis_pkt_gate`, which consumes canon's drop flag.
-- **Response side** — `canon → buffer → commit`. No gate: the buffer's commit/abandon consumes the drop flag natively, and the commitment then sees only verified drained records — including the effect of any drain preemption, so the digest matches what actually left toward the wire.
+- **Response side** — `canon → buffer → commit`. No gate: the buffer's commit/abandon consumes the drop flag natively, and the commitment then sees only verified drained records, so the digest matches what actually left toward the wire.
 
 ## Inline Bucket marker flow and tuser
 

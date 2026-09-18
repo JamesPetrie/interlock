@@ -124,15 +124,13 @@ unexplained-information accounting instead (§11).
 1 ms buckets by a free-running on-device timer. Egress in each direction is
 staged through a **ping-pong bucket buffer** (`batch_buffer.sv`): packets
 accepted during bucket `b` accumulate in one bank while the other bank —
-bucket `b−1`'s contents — drains to the wire; the banks swap exactly on the
-tick. An admission guard accepts a packet's first beat only if enough
-cycles remain before the tick (else it stalls until after the swap), so no
-record straddles banks; a drain still running at the next tick is preempted
-— the cut is closed and the un-emitted remainder dropped (§7). The outside
-world therefore observes only **bank contents at bucket changeover points**,
-never sub-bucket timing. The timing channel that remains (which bucket a
-packet lands in) is explicit, committed (the in-packet bucket field, §4),
-and capacity-bounded by the bucket width and the bank size.
+bucket `b−1`'s contents — drains to the wire. A packet is accepted for the
+declared bucket if it's header is processed before the tick. The drain
+side waits a grace period after the tick for the trailing writes before it
+starts emitting the closed bank. A bank is assumed to drain within one
+bucket period. The outside world therefore observes only **bank contents at bucket changeover
+points**, never sub-bucket timing. The timing channel that remains (which
+bucket a packet lands in) is covered by prediction based entropy charging.
 
 **No side observables.** Invalid packets are silently suppressed
 (header-check failures never leave `canon_proc`; payload-check failures are
@@ -265,8 +263,8 @@ computed incrementally as packets stream through (`traffic_commit` +
 3. per epoch:   overall  — running SHA-256 over the N bucket hashes,
                 one per direction (overall_req, overall_rsp)
 
-m   = version ‖ interlock_id ‖ bucket_start ‖ num_buckets
-      ‖ overall_req ‖ overall_rsp ‖ nonce ‖ prev_τ
+m   = certificate body — field layout in verification-protocol.md,
+      "Certificate packet"
 τ   = HMAC_k(m)
 certificate frame = [ zero canonical header (id = 0) ] ‖ m ‖ τ
 ```
@@ -291,10 +289,7 @@ per key (C2, C3).
 figure): requests are committed **before** the bucket buffer — the
 certificate binds what was *accepted into* the quarantine — while responses
 are committed **after** it, on the drain side — the certificate binds
-exactly the bytes that *left* the quarantine. A response drain preempted at
-the tick (§7) therefore never commits its unsent remainder: the attested
-outbound log and the wire are identical by construction, which is the
-direction where it matters.
+exactly the bytes that *left* the quarantine.
 
 **The nonce latch needs no authentication.** The verifier's nonce arrives
 as an inbound `id = 0` control packet; `canon_proc` latches its key-commit
@@ -378,19 +373,24 @@ toward availability**: no failure mode may yield a false certificate or an
 ambiguous timeline; failures instead cost traffic, prover standing, or (in
 the limit) the device's ability to certify at all.
 
-- **Restarts never rewind the timeline.** The key survives power cycles
+- **Restarts never rewind the timeline.**
+  ```
+  *TODO (James):* Is the persistent counter still planned or no longer
+  needed with the verifier nonce?
+  ```
+  The key survives power cyclesß
   (PUF-wrapped in sNVM, §2), so uniqueness cannot rest on state
   evaporating; it rests on a **persisted monotonic epoch counter** with
   never-rewind boot logic. The counter is written to sNVM every `W` epochs;
   on boot the device resumes at `persisted + W` (a safety margin past any
   epoch it could have certified), so no epoch is ever certified twice (C2)
   even across arbitrary power cycles. The restart itself is unhideable: the
-  skipped epochs are a gap in the certificate chain and bucket tiling,
+  skipped epochs are a gap in the certificate chain and bucket tiling
   which the verifier treats as unattested time — worst-case information
   charge for the gap, or grounds for re-inspection (policy, not mechanism).
   Rolling the persisted counter back would require rewriting authenticated
   sNVM inside the device's security boundary — the same trust as key
-  storage itself. Active tamper (detector-triggered) escalates to
+  storage itself. Active tamper (detector-triggered) escalatßes to
   zeroization: key death, ending the stream permanently. *(This
   key/counter-persistence layer is design; the RTL currently takes the key
   on a port — §11.)*
@@ -398,14 +398,10 @@ the limit) the device's ability to certify at all.
   moves to the new bucket the instant it fires, independent of downstream
   backpressure, and signals the boundary in-band as an unambiguous empty
   beat. Congestion can delay *packets*, never *time*.
-- **Buffer admission and preemption.** The admission guard stalls a packet
-  at its first beat rather than letting a record straddle banks; if the
-  guard is ever violated, the in-flight record is abandoned rather than
-  half-committed. A drain still running at the next tick is preempted: a
-  termination beat closes the cut stream and the remainder is dropped —
-  and because responses are committed on the drain side (§5), a preempted
-  remainder is neither released nor attested. Loss is always visible to
-  the endpoints, never absorbed silently into commitments.
+- **Buffer admission and drain deadline.** A record that fails its payload
+  check or overruns the bank is dropped. A bank is assumed to drain within
+  one bucket periodand needs to be enforced in the design if not guaranteed
+  otherwise.
 - **Honest drops are avoidable and non-fatal.** Exact-match buckets drop
   boundary-straddling declarations; the honest frontend avoids this by
   calibrating against the sync packets' `FIRST_ARR` feedback and not
@@ -438,7 +434,7 @@ Components, in datapath order (all `gateware/src/src_hdl/` on `main`):
 | `eth_deframe` / `eth_reframe` | 802.3 sanitization: force DST/SRC, enforce LENGTH, strip PAD; re-originate with fresh headers + recomputed FCS | Metadata removal (§3): only canonical DATA crosses |
 | `canon_proc` (+ `axis_pkt_gate`) | Header shift-register: length, id, reference, reserved, **bucket** checks; in-band boundary markers, nonce capture (`id = 0`), sync emission (`id = 1`); gate suppresses payload-check failures | Enforces §4.1 — the premises of the reconstruction argument; drops are silent |
 | `traffic_commit` (`record_layer`, `serializer`, `sha256_msg`) | Per-packet record → running bucket digest → epoch digest; rate-matched, never back-pressures the datapath | The commitment hierarchy (§5); requests as accepted, responses as released |
-| `batch_buffer` | Ping-pong banks; swap exactly at tick; admission guard; drain preemption | Timing isolation (§3): outside sees only changeover snapshots |
+| `batch_buffer` | Ping-pong banks; swap based on timer tick | Timing isolation (§3): outside sees only changeover snapshots |
 | `cert_build` (+ `crypto/`: `sha256_core`, `sha256_msg`, `hmac_sha256`) | Assemble `m`, `τ = HMAC_k(m)`, emit the 0-id certificate frame; `prev_τ` chains certificates | The attestation (§5); the only secret-bearing operation |
 | `axis_mux3` / 2×1 mux | Arbitrate forwarded / cert / sync per egress | Fixed, prover-predictable egress set |
 | Bucket timer (in `fabric_bridge`) | Free-running 1 ms tick to `canon_proc` + buffers | Authoritative time base; no external set path |
@@ -514,8 +510,7 @@ rewound, and a key that cannot be read.**
 
 1. **Silicon verification pending.** The production core (sanitization,
    `canon_proc`, `batch_buffer` timing isolation, chained certs) exists on
-   `main` and in testbenches; the currently-flashed image predates it. The
-   isolation and certificate claims hold for hardware only after the
+   `main` The isolation and certificate claims hold for hardware only after the
    on-silicon certificate-byte and timing-release checks pass.
 2. **Debug observability in production.** Bring-up needs counters, sticky
    flags, and (on debug branches) UART telemetry — exactly what D2 forbids

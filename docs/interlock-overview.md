@@ -38,7 +38,8 @@ against the prover as unexplained information. Prover failures therefore
 degrade the prover's standing, never the soundness of the verifier's bound.
 
 The trusted computing base is deliberately tiny — a dozen or so SystemVerilog
-blocks, no CPU, no firmware, no software stack on the trusted path. This is
+blocks, no CPU, no firmware, no software stack on the trusted path (the build's
+Mi-V soft core only brings up the PHYs and MACs, off the data path). This is
 what makes the device a natural target for **formal verification**: the
 security of the whole scheme reduces to trace-level properties of a small,
 fully inspectable RTL design plus standard cryptographic assumptions.
@@ -55,7 +56,7 @@ verifier ↔ prover frontend ↔ [ port 0 | FPGA fabric | port 1 ] ↔ compute n
                                        interlock                 (quarantined)
 ```
 
-**Datapath (all fabric, 80 MHz, no CPU).** In order:
+**Datapath (all fabric, 80 MHz, no CPU on the data path).** In order:
 
 - **802.3 sanitization** (`eth_deframe`/`eth_reframe`): each port terminates
   frames and re-originates them. MAC addresses are forced to fixed values, the
@@ -78,11 +79,10 @@ verifier ↔ prover frontend ↔ [ port 0 | FPGA fabric | port 1 ] ↔ compute n
   outside world observes only bucket-granular release times, never sub-bucket
   timing.
 - **Certificate builder** (`cert_build` + HMAC-SHA-256): once per epoch the
-  device emits `m ‖ HMAC_k(m)` where `m` = version ‖ device-id ‖ bucket-range
-  ‖ the two per-direction epoch digests ‖ the latest verifier nonce ‖ the
-  previous certificate's tag. Certificates thus form a hash chain that tiles
-  the bucket timeline; the nonce anchors it to the verifier's wall clock. The
-  device generates MACs but never verifies one.
+  device emits `m ‖ HMAC_k(m)`, where `m` is the certificate body defined in
+  `verification-protocol.md` (*Certificate packet*). Certificates form a
+  hash chain that tiles the bucket timeline; the nonce anchors it to the
+  verifier's wall clock. The device generates MACs but never verifies one.
 
 Requests are committed **before** the egress buffer (binding what entered the
 quarantine); responses are committed **after** it (binding exactly the bytes
@@ -102,22 +102,22 @@ behind a second, simpler interlock guarding a verifier enclosure — then bounds
 the unexplained information U in the sampled response. Full details in
 `verification-protocol.md` and `security-architecture.md`.
 
-**Implementation status.** The full protocol runs end-to-end in a Python
-prototype (`prototype/`), which doubles as the golden model. A conformance
-core was built bottom-up in Verilog and verified **byte-for-byte** against the
-golden model under cocotb (SHA-256 against NIST vectors, HMAC against
-RFC 4231, full 140-byte certificates identical to the Python reference),
-then independently audited. The production core on `main` — sanitization,
+**Implementation status.** The production core on `main` — sanitization,
 canonical-packet enforcement, ping-pong timing isolation, chained
-certificates, and the recomputation sibling — carries per-block testbenches
-and builds for the eval kit; real LLM traffic has been run across the device.
+certificates, and the recomputation sibling — builds for the eval kit; real LLM traffic has been run across the device.
 Deliberately open engineering items: key custody in hardware (PUF-wrapped key
 and a persisted monotonic epoch counter in secure NVM — currently the RTL
-takes the key on a port), DPA-resistant HMAC via the on-die cryptoprocessor,
+uses a hardcoded key), DPA-resistant HMAC via the on-die cryptoprocessor,
 a build-level gate excluding all debug taps from production bitstreams, and
 on-silicon verification of the timing-release behavior.
 
 ## 3. Security properties
+
+```
+TODO (James): three overlapping property lists exist — S1–S6 here, P1–P5 in
+verification-protocol.md, C1–C7/D1–D5 in security-architecture.md.
+Please algin/deduplicate these.
+```
 
 The scheme's soundness reduces to the following properties. Each is stated as
 the property of the device (or device + protocol) that a verified

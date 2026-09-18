@@ -98,7 +98,7 @@ Index of the time bucket the packet is targeting.
 **ID** \
 Identifier of the transaction. \
 **ID[0]** is the Inference flag, must be set for inference requests. \
-ID=0 is RESERVED for control messages.
+IDs 0 and 1 are RESERVED for control packets (see [Control packets](#control-packets)).
 
 #### Request Only HEADER fields
 
@@ -116,18 +116,93 @@ Cryptographic commitment to the key material used for this request and its respo
 The cleartext header carries only what a trusted party must act on without decrypting during a challenge. Everything else compute or the frontend needs — completion markers, role hints — rides inside the encrypted payload, cert-bound via `pld_digest` but opaque to the interlock and verifier and reproduced naturally by recomputation.
 
 **Validity rules**, enforced by the interlock on the fly (violating packets are dropped — never forwarded, never hashed): \
-- `PLD_LEN ≤ S_max`
+- the packet carries a complete header
+- `PLD_LEN ≤ S_max`; `S_max` is fixed by construction — a packet must fit one Ethernet frame, so it is the frame's DATA field minus the header
+- `BUCKET` equals the interlock's current bucket when the header is checked (the sender tracks it from the sync packets)
+- `ID ∉ {0, 1}` (reserved for control packets)
 - `ID` strictly increasing across the session inbound
 - `ID` strictly increasing within each bucket outbound (out-of-order responses support)
   - The prover pre-sorts
   - The outbound comparator resets per bucket
+- `REFERENCE < ID` (inbound)
+- `RESERVED` fields zero
+- inference packets (`ID[0]` set) carry a whole number of token units in the payload
 - Drops leave no trace in commitments
   - A dropped packet never exits the node, so it carries no exfiltration risk
   - The prover initiates each transaction and notices drops via timeout
 
-### Certificate format 160 bytes
+### Control packets
 
-Every second the interlock emits a certificate committing to the last 1000 buckets of both logs, computed incrementally as packets stream through:
+Two control packets are header-only and ride on the wire next to the traffic packets. Both carry their reserved `ID` at the same offset as a traffic packet's `ID`.
+
+**Nonce packet** — sent inbound by the prover frontend whenever the verifier issues a nonce. The interlock latches `NONCE` and drops the packet; it is never forwarded (the recomputation interlock instead forwards it as the challenge start marker, see Option 1). Nothing is authenticated (see [Nonce latch](#nonce-latch)).
+
+```
+         32 bit     32 bit          64 bit
+      +----------+----------+---------------------+
+      | RESERVED |  BUCKET  |        ID = 0       |
+      +----------+----------+---------------------+
+      |                                           |
+      +-                 RESERVED                -+
+      |                                           |
+      +-------------------------------------------+
+      |                   NONCE                   |
+      +-------------------------------------------+
+```
+
+**BUCKET** \
+The current bucket, as in a traffic packet. (Only used in the recomputation interlock.)
+
+**NONCE** \
+The verifier-supplied nonce, 128 bits.
+
+**Sync packet** — emitted by the interlock once per bucket tick, on each direction, and routed back toward that direction's *own* sender (the request-side sync reaches the frontend, the response-side sync reaches the compute node). It is the sender's time reference for stamping `BUCKET` in its traffic packets.
+
+```
+         32 bit     32 bit          64 bit
+      +----------+----------+---------------------+
+      | FIRST_ARR|  BUCKET  |        ID = 1       |
+      +----------+----------+---------------------+
+      |                                           |
+      +-                                         -+
+      |                  RESERVED                 |
+      +-                                         -+
+      |                                           |
+      +-------------------------------------------+
+```
+
+**FIRST_ARR** \
+Interlock timer value (fabric-clock cycles since the bucket started) at which the closed bucket's first header-accepted packet arrived; all-ones if none. A packet later dropped for its payload still counts as accepted.
+
+```
+TODO: move FIRST_ARR into the reserved area and set the first word to 0,
+so the sync packet is a well-formed header-only packet under the generic
+length rule.
+```
+
+**BUCKET** \
+The bucket the sync feeds back on.
+
+### Certificate packet 224 bytes
+
+Every second the interlock emits a certificate packet toward the frontend, committing to the last 1000 buckets of both logs, computed incrementally as packets stream through. It is not itself committed. The packet is a 64-byte header followed by the 160-byte certificate.
+
+**Header 64 bytes** — all zero; `ID = 0` at the ID offset identifies the packet.
+
+```
+         32 bit     32 bit          64 bit
+      +----------+----------+---------------------+
+      | RESERVED | RESERVED |        ID = 0       |
+      +----------+----------+---------------------+
+      |                                           |
+      +-                                         -+
+      |                  RESERVED                 |
+      +-                                         -+
+      |                                           |
+      +-------------------------------------------+
+```
+
+**Certificate 160 bytes** — the signed message body `m` followed by its tag:
 
 ```
          32 bit     32 bit     32 bit     32 bit
@@ -204,11 +279,16 @@ The packet level records are then combined into a bucket level digest, then buck
 ```
 1. per packet:   pld_digest   = H(PAYLOAD)
                  pkt_digest   = H(HEADER ‖ pld_digest)
-                 record       = PLD_LEN ‖ pkt_digest
+                 record       = PLD_LEN[15:0] ‖ pkt_digest              (34 bytes)
 
 2. per bucket:   bkt_digest   = H(record₁ ‖ record₂ ‖ …)              (H(ε) if empty)
 
 3. per cert:     cert_digest  = H(bkt_digest₁ ‖ … ‖ bkt_digest₁₀₀₀)   one per direction
+```
+
+```
+TODO (dev): make the record carry the full 4-byte PLD_LEN (36-byte record) and
+widen the length register in the commit path to 32 bits.
 ```
 
 #### Nonce latch
@@ -279,7 +359,7 @@ This costs the interlock nothing. A `REFERENCE` is just bytes in the header that
 ## Challenge
 
 1. **Anchor.** Verifier sends a fresh nonce; prover returns the next certificate echoing it, stamping current bucket `B` within `[t_nonce, t_receipt]`. Verifier logs the anchor and checks counter monotonicity and counter rate vs. wall clock.
-2. **Select.** Uniform `(bucket y, byte x)` over `[B − window, B] × [0, C)`, where `C` is per-bucket capacity (100 KB at 100 MB/s line rate). Uniform-over-capacity is size-weighted sampling: every transmitted byte is equally likely to be challenged; an `x` past the bucket's content is a cheap liveness check.
+2. **Select.** Uniform `(bucket y, byte x)` over `[B − window, B] × [0, C)`, where `C` is the per-bucket capacity: the interlock's buffer bank size, a device parameter, so the bound is exact by construction — the interlock cannot pass more than `C` bytes in a bucket, and whether a bucket is filled is up to the prover. Uniform-over-capacity is size-weighted sampling: every transmitted byte is equally likely to be challenged; an `x` past the bucket's content is a cheap liveness check.
 3. **Open.** From its log, the prover derives and sends the smallest slice sufficient for the verifier to recompute the certificate: the stored certificate covering `y`, the 1000 output `bkt_digest` from that second, bucket `y`'s records, and the hit packet's header and `pld_digest` — plus the same opening for the matching input packet in bucket `w` (certificate, 1000 `bkt_digest`, records, HEADER, `pld_digest`, `KEY_COMMIT`). If `Σ PLD_LEN < x` the record list alone proves emptiness and the challenge ends. Under the ZKP option no ciphertext is ever sent to the verifier.
 4. **Recompute.** The prover supplies a recomputation certificate (next section) binding to the opened values.
 5. **Verify**, in order: (a) both certificates' AUTH_TAGs and `DEVICE` against the anchor log; (b) the supplied 1000 `bkt_digest` recompute each certificate's `cert_digest` (INWARD and OUTWARD); (c) the records recompute the two `bkt_digest`; (d) byte `x` falls in the claimed packet per cumulative `PLD_LEN`; (e) input binding — the response's context chain (References) opens against certificates, each link earlier than the next, `ID`s matching, the challenged request having explained no other response; (f) the recomputation certificate verifies against `(H1_in, H2, H1_out)`, yielding U.
@@ -304,7 +384,7 @@ A recomputation certificate attests, for one challenged pair: *"the response tok
 
 The prover's own hardware recomputes inside a verifier enclosure; a second, simpler interlock mediates all data crossing the enclosure boundary and emits the certificate.
 
-![Prover recomputation option: the same workload track, plus a parallel recomputation track — the frontend stages the challenged pair through a second (stateless) interlock to the recomputation compute inside the verifier enclosure.](fig-prover-recomp.png){ width=100% }
+![Prover recomputation option: the same workload track, plus a parallel recomputation track — the frontend stages the challenged pair through a second interlock to the recomputation compute inside the verifier enclosure.](fig-prover-recomp.png){ width=100% }
 
 **Setup (before the workload phase):** the recomputation node enters the enclosure loaded only with pre-committed data (weights, execution engine). It must not be — or share state with — the node that ran the workload: a node that remembers the challenged response can replay any covert payload at probability 1 and launder it as "explained." If hardware is reused across challenge sessions, memory is wiped between them.
 
@@ -323,8 +403,6 @@ Both instantiations end at the same interface. The ZKP binds `(H1_in, H2, H1_out
 
 **End-to-end chain:** wire bytes → log → certificate (fixed within 1 s of transmission) → H1/H2 → tokens → U. The verifier needs nothing but its anchor log, the opened log slices, and the recomputation certificate.
 
-**Worked sizes:** anchor certificate ~150 B → challenge ~12 B → opening ≈ 2 certificates + two 32 KB `bkt_digest` lists + two record lists (~48 B/packet) + two headers with hashes (~100 B) → recomputation certificate ~150 MB (ZKP option). Everything outside the recomputation verifies with a few hundred hashes over ~100 KB.
-
 **Certificate-release audit (optional):** since every certificate field is prover-predictable, a prover worried about covert bits in AUTH_TAGs can release challenge-time tags via slot-bound cut-and-choose: the verifier binds one commitment per certificate slot *before* revealing its own τ′ — it must never act as an unrestricted HMAC oracle.
 
 ## Spec decisions
@@ -335,4 +413,4 @@ Both instantiations end at the same interface. The ZKP binds `(H1_in, H2, H1_out
 
 ## Suggested parameters
 
-`H` = SHA-256; MAC = HMAC-SHA-256 (pre-shared `k`); bucket = 1 ms; certificate period = 1 s; `ID` = 64-bit; `S_max` = deployment-set; per-bucket capacity `C` = 100 KB; challenge window = 30 days (prover-side log storage).
+`H` = SHA-256; MAC = HMAC-SHA-256 (pre-shared `k`); bucket = 1 ms; certificate period = 1 s; `ID` = 64-bit; `S_max` = one Ethernet frame's DATA field minus the header (fixed by construction); per-bucket capacity `C` = the interlock's buffer bank size (a build parameter); challenge window = 30 days (prover-side log storage).

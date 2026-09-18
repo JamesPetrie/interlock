@@ -1,5 +1,11 @@
 # Interlock Prototype Plan
 
+```
+TODO (James): a plan does not belong in docs/. Merge what is still relevant
+(e.g. the "still simulated / deferred" points) into the README or another
+suitable place, and delete this file. Also, do we still need the "prototype" dir?
+```
+
 Bring the verification protocol up end-to-end on real hardware in stages, each of which makes exactly one property *real* (and leaves the rest simulated until a later stage). Companion to `verification-protocol.md` (the spec) and `model/` (the executable reference the software stages reuse).
 
 ## Topology: single-machine loop
