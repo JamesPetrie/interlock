@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="330" viewBox="0 0 900 330" font-family="Helvetica, Arial, sans-serif">
+  <defs><marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#333"/></marker></defs>
+  <rect width="900" height="330" fill="#ffffff"/>
+  <rect x="40" y="30" width="170" height="44" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="125" y="57" font-size="14" font-weight="bold" text-anchor="middle" fill="#1e4f8f">Verifier</text>
+  <rect x="365" y="30" width="170" height="44" rx="8" fill="#fbe3bd" stroke="#e08a1e" stroke-width="2"/><text x="450" y="57" font-size="14" font-weight="bold" text-anchor="middle" fill="#8a4b00">Prover</text>
+  <rect x="690" y="30" width="170" height="44" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="775" y="57" font-size="14" font-weight="bold" text-anchor="middle" fill="#1e4f8f">Network Certifier</text>
+  <g stroke="#bbb" stroke-dasharray="4 4"><line x1="125" y1="74" x2="125" y2="310"/><line x1="450" y1="74" x2="450" y2="310"/><line x1="775" y1="74" x2="775" y2="310"/></g>
+  <g font-size="12" fill="#444" text-anchor="middle">
+    <line x1="130" y1="110" x2="445" y2="110" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="287" y="102">nonce</text>
+    <line x1="455" y1="110" x2="770" y2="110" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="612" y="102">nonce</text>
+    <line x1="770" y1="150" x2="455" y2="150" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="612" y="142">certificate</text>
+    <line x1="445" y1="150" x2="130" y2="150" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="287" y="142">certificate</text>
+    <line x1="130" y1="210" x2="445" y2="210" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="287" y="202">challenge: bucket, byte</text>
+    <line x1="445" y1="250" x2="130" y2="250" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="287" y="242">hashes and one header</text>
+    <line x1="445" y1="290" x2="130" y2="290" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/><text x="287" y="282">Û, signed</text>
+  </g>
+</svg>

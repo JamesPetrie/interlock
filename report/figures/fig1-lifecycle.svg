@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="340" viewBox="0 0 1000 340" font-family="Helvetica, Arial, sans-serif">
+  <defs><marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#333"/></marker></defs>
+  <rect width="1000" height="340" fill="#ffffff"/>
+  <text x="30" y="65" font-size="14" font-weight="bold" fill="#8a4b00">Prover frontend</text>
+  <text x="30" y="175" font-size="14" font-weight="bold" fill="#1e4f8f">Network Certifier</text>
+  <text x="30" y="285" font-size="14" font-weight="bold" fill="#8a4b00">Prover compute</text>
+  <line x1="190" y1="60" x2="980" y2="60" stroke="#e08a1e" opacity="0.5"/>
+  <line x1="190" y1="170" x2="980" y2="170" stroke="#2f6cbf" opacity="0.5"/>
+  <line x1="190" y1="280" x2="980" y2="280" stroke="#e08a1e" opacity="0.5"/>
+  <g stroke="#2f6cbf" stroke-width="2"><line x1="230" y1="155" x2="230" y2="185"/><line x1="430" y1="155" x2="430" y2="185"/><line x1="630" y1="155" x2="630" y2="185"/><line x1="830" y1="155" x2="830" y2="185"/></g>
+  <g font-size="12" fill="#1e4f8f" text-anchor="middle"><text x="330" y="205">bucket b</text><text x="530" y="205">b+1</text><text x="730" y="205">b+2</text><text x="905" y="205">1 ms each</text></g>
+  <!-- request in, released at the tick -->
+  <line x1="300" y1="68" x2="300" y2="160" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="360" y1="68" x2="360" y2="160" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="330" y="112" font-size="12" fill="#444" text-anchor="middle">requests</text>
+  <line x1="440" y1="180" x2="440" y2="272" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- response in, released at the tick -->
+  <line x1="700" y1="272" x2="700" y2="180" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="730" y="245" font-size="12" fill="#444" text-anchor="start">response</text>
+  <line x1="840" y1="160" x2="840" y2="68" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
+  <!-- certificate -->
+  <rect x="890" y="82" width="90" height="34" rx="6" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="1.5"/>
+  <text x="935" y="104" font-size="12" text-anchor="middle" fill="#1e4f8f">certificate</text>
+  <text x="935" y="140" font-size="11" text-anchor="middle" fill="#1e4f8f">every 1 s</text>
+</svg>

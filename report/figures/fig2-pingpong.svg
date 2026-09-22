@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="340" viewBox="0 0 1000 340" font-family="Helvetica, Arial, sans-serif">
+  <defs><marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#333"/></marker></defs>
+  <rect width="1000" height="340" fill="#ffffff"/>
+  <g font-size="11" text-anchor="middle" fill="#1f3f6e">
+    <rect x="40" y="90" width="60" height="26" rx="4" fill="#e3eefb" stroke="#2f5b9a"/><text x="70" y="107">pkt b</text>
+    <rect x="108" y="90" width="60" height="26" rx="4" fill="#e3eefb" stroke="#2f5b9a"/><text x="138" y="107">pkt b</text>
+    <rect x="176" y="90" width="24" height="26" rx="4" fill="#fff" stroke="#b8862b" stroke-dasharray="3 2"/><text x="188" y="107" fill="#8a5a00">|</text>
+    <rect x="208" y="90" width="66" height="26" rx="4" fill="#e3eefb" stroke="#2f5b9a"/><text x="241" y="107">pkt b+1</text>
+  </g>
+  <text x="188" y="135" font-size="10.5" fill="#8a5a00" text-anchor="middle">marker</text>
+  <line x1="290" y1="103" x2="360" y2="103" stroke="#333" stroke-width="1.2" marker-end="url(#arr)"/>
+  <rect x="370" y="60" width="260" height="90" rx="8" fill="#fdf3e2" stroke="#b8862b" stroke-width="1.5"/>
+  <text x="500" y="90" font-size="13" font-weight="bold" text-anchor="middle" fill="#5c3d00">Bank A</text>
+  <text x="500" y="112" font-size="12" text-anchor="middle" fill="#5c3d00">filling with bucket b</text>
+  <rect x="370" y="190" width="260" height="90" rx="8" fill="#fdf3e2" stroke="#b8862b" stroke-width="1.5"/>
+  <text x="500" y="220" font-size="13" font-weight="bold" text-anchor="middle" fill="#5c3d00">Bank B</text>
+  <text x="500" y="242" font-size="12" text-anchor="middle" fill="#5c3d00">draining bucket b−1</text>
+  <line x1="640" y1="235" x2="710" y2="235" stroke="#333" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="800" y="230" font-size="12" text-anchor="middle" fill="#1f5f1f">to the wire,</text>
+  <text x="800" y="246" font-size="12" text-anchor="middle" fill="#1f5f1f">whole bucket at once</text>
+  <g stroke="#b8862b" stroke-width="1.5" fill="none">
+    <path d="M 640 105 C 700 105, 700 210, 640 210" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+  </g>
+  <text x="712" y="160" font-size="11" fill="#8a5a00">swap at the tick</text>
+</svg>
