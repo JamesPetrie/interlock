@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="560" viewBox="0 0 880 560" font-family="Helvetica, Arial, sans-serif">
+  <defs><marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#333"/></marker></defs>
+  <rect width="880" height="560" fill="#ffffff"/>
+  <!-- packets -->
+  <g font-size="13" font-weight="bold" text-anchor="middle" fill="#8a4b00">
+    <rect x="80" y="30" width="120" height="40" rx="8" fill="#fbe3bd" stroke="#e08a1e" stroke-width="2"/><text x="140" y="55">packet</text>
+    <rect x="240" y="30" width="120" height="40" rx="8" fill="#fbe3bd" stroke="#e08a1e" stroke-width="2"/><text x="300" y="55">packet</text>
+    <rect x="400" y="30" width="120" height="40" rx="8" fill="#fbe3bd" stroke="#e08a1e" stroke-width="2"/><text x="460" y="55">packet</text>
+    <text x="580" y="57" font-size="18" fill="#8a4b00">…</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5"><line x1="140" y1="72" x2="140" y2="118" marker-end="url(#arr)"/><line x1="300" y1="72" x2="300" y2="118" marker-end="url(#arr)"/><line x1="460" y1="72" x2="460" y2="118" marker-end="url(#arr)"/></g>
+  <text x="640" y="100" font-size="12" fill="#444">1 packet → 1 record</text>
+  <!-- records -->
+  <g font-size="13" font-weight="bold" text-anchor="middle" fill="#1e4f8f">
+    <rect x="80" y="122" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="140" y="147">record</text>
+    <rect x="240" y="122" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="300" y="147">record</text>
+    <rect x="400" y="122" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="460" y="147">record</text>
+    <text x="580" y="149" font-size="18" fill="#1e4f8f">…</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5"><line x1="140" y1="164" x2="280" y2="228" marker-end="url(#arr)"/><line x1="300" y1="164" x2="300" y2="228" marker-end="url(#arr)"/><line x1="460" y1="164" x2="320" y2="228" marker-end="url(#arr)"/></g>
+  <text x="640" y="205" font-size="12" fill="#444">all records of 1 ms</text>
+  <!-- bucket hashes -->
+  <g font-size="13" font-weight="bold" text-anchor="middle" fill="#1e4f8f">
+    <rect x="240" y="232" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="300" y="257">bucket hash</text>
+    <rect x="80" y="232" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2" stroke-dasharray="4 3"/><text x="140" y="257">bucket hash</text>
+    <rect x="400" y="232" width="120" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2" stroke-dasharray="4 3"/><text x="460" y="257">bucket hash</text>
+    <text x="580" y="259" font-size="18" fill="#1e4f8f">…</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5"><line x1="140" y1="274" x2="280" y2="338" marker-end="url(#arr)"/><line x1="300" y1="274" x2="300" y2="338" marker-end="url(#arr)"/><line x1="460" y1="274" x2="320" y2="338" marker-end="url(#arr)"/></g>
+  <text x="640" y="315" font-size="12" fill="#444">all bucket hashes of 1 s</text>
+  <!-- traffic hash -->
+  <rect x="220" y="342" width="160" height="40" rx="8" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/><text x="300" y="367" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e4f8f">requests hash</text>
+  <line x1="300" y1="384" x2="300" y2="448" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- certificate -->
+  <rect x="150" y="452" width="440" height="70" rx="10" fill="#ffffff" stroke="#2f6cbf" stroke-width="2"/>
+  <text x="370" y="475" font-size="13" font-weight="bold" text-anchor="middle" fill="#1e4f8f">Signed certificate</text>
+  <rect x="220" y="484" width="160" height="28" rx="6" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="1.5"/><text x="300" y="503" font-size="12" text-anchor="middle" fill="#1e4f8f">requests hash</text>
+  <rect x="400" y="484" width="160" height="28" rx="6" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="1.5" stroke-dasharray="4 3"/><text x="480" y="503" font-size="12" text-anchor="middle" fill="#1e4f8f">responses hash</text>
+  <text x="640" y="400" font-size="12" fill="#444">one hash per direction</text>
+</svg>
