@@ -22,7 +22,7 @@ ifeq ($(SIM),verilator)
 endif
 
 # Build directory inside the per-test dir (gitignored)
-SIM_BUILD := sim_build
+SIM_BUILD ?= sim_build
 
 # Path that lets cocotb find Python modules in the test dir
 export PYTHONPATH := $(PWD):$(PYTHONPATH)

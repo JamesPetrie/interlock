@@ -27,6 +27,7 @@ attestation via the PolarFire System Controller).
 | Prod top at 1 ms buckets (bidirectional, ~6e-6 drop rate at ~97 Mb/s each way) | ✓ on silicon 2026-07-20 (branch `build/prod-1ms`) |
 | Bucket-timing / throughput characterization on the bench | ✓ 2026-08-11 |
 | Build-config knobs (`TOP={recomp,prod}`, `BUCKET_MS={100,1}`) merged to main | — (`feature/build-config-knobs`) |
+| VPK180 (Versal Premium, QSFP-DD optics) port: MRMAC shim RTL + cocotb benches, Vivado flow scaffold | RTL/sim ✓ 2026-09-24; synthesis pending link params + Versal machine (`docs/vpk180-port.md`) |
 
 > **What `./build.sh` on `main` builds today:** the **recomp** top with a
 > **100 ms testing-override bucket period**. Sync + cert traffic appears on

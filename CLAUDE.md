@@ -87,3 +87,19 @@ Libero's "update memory content" tool.
 - **Don't commit the AN4623 zip** (it's 13 MB) or the `Programming_Job/`
   prebuilt `top.job`. Both are recoverable: zip from the Microchip CDN
   (see NOTES.md), prebuilt `.job` is in the zip.
+
+## VPK180 port (`gateware_vpk180/`)
+
+Versal Premium port of the same core (`docs/vpk180-port.md`). Rules:
+
+- The interlock core RTL stays in `gateware/src/src_hdl/` and is shared; the
+  VPK180 side is only `gateware_vpk180/hdl/` (MRMAC shim, PL top `ilock_pl`).
+- Link parameters (optics, rate, FEC, quads, AXI width) live in
+  `gateware_vpk180/params.tcl` — fill in before synthesis, never hardcode
+  them in RTL. `MAC_AXIS_W` must match the MRMAC interface width.
+- `make test-vpk180` (cocotb/Icarus) and `make lint-vpk180` run here; the
+  Vivado flow (`gateware_vpk180/build.sh`) needs the Versal machine — this
+  box's Vivado has no VP1802 device support or license.
+- `gateware_vpk180/build/` is gitignored Vivado output; don't edit it.
+- `sim_axis_cdc_fifo.sv` is sim-only (`SIM_NO_XPM`); production CDC is
+  `xpm_fifo_axis`.

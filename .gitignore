@@ -20,3 +20,8 @@ tb/**/sim_build*/
 tb/**/results.xml
 tb/**/*.vcd
 tb/**/dump.vcd
+
+# Vivado (VPK180 port)
+gateware_vpk180/build/
+*.jou
+.Xil/
