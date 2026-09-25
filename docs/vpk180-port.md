@@ -350,6 +350,48 @@ run's auto-incremental checkpoint. `inline_build.tcl` now disables
 pass. Placement constraints live in `inline_loc.xdc`, used in implementation
 only, and are verified after implementation against `params.tcl`.
 
+**Peer-facing image (`INLINE_TOPO=ilock`):** the interlock between the two
+cages and nothing else — no example generators, no PS frame ports. Both
+wrappers have their client-select tied to the core (`ext_sel` = 1), `ilock_pl`
+port 0 is the cage 3 MRMAC (client side), port 1 the cage 1 MRMAC (server
+side); the control block keeps CTL bit 9 (`mode_core`) and bit 8 and reports
+ID 0x494C4B50 "ILKP" (the PS-direct/pass-through images report 0x494C4B31
+"ILK1", so a program can tell which image it is on). Output `build/ilock/`.
+`sw/mrmac_ilock_peer.c` configures both MACs (TX 0xC03, RX 0x31 on both, as
+both feed the core), brings the links up with the core in reset, releases it
+and prints per-port MAC statistics once a second; pass = both RX sides good ==
+total with no FCS/length errors.
+
+The core assumes free-flowing traffic (it is not built to be back-pressured);
+the shim keeps that true — the MRMAC always drains its TX at line rate, and
+the RX drop FIFO discards whole frames instead of stalling. The one way to
+violate it is the client-select mux pointing away from the core while the
+core runs, which the peer-facing image cannot do. (Seen once on a mis-built
+image: released with the port held off, the core's output did not resume when
+the port was handed back — expected under that assumption, not a shim bug.)
+
+Build gotcha (fixed 2026-09-25 in `inline_build.tcl`): all `inline-build`
+topologies live in the one example project, and the other topology's
+`build/<inline|ilock>/gen/*` files stayed enabled — both define
+`mrmac_inline_top`, and synthesis silently took the stale one (the log line
+`synthesizing module 'mrmac_inline_top' [...]` names the file actually used;
+identical timing summaries between two "different" builds are the other
+tell). The script now disables every generated file outside the current
+`gen/` directory. Two builds also cannot run at the same time (the second
+aborts writing `gen_run.xml`).
+
+**Result on hardware (2026-09-25 11:26, `build/console_112559.log`, WNS
+−0.005 ns):** with cage 1 cabled to cage 3, links aligned, ID 0x494C4B50,
+nothing flows while the core is in reset; once released, every second:
+cage 3 TX 1001 packets / 82,242 bytes (1000 syncs of 82 B + one 242 B
+certificate), cage 1 TX 1000 / 82,000 (syncs only); each side's RX equals the
+other side's TX, good == total, zero bad-FCS / in-range / truncated / framing
+errors, drop LED never set. The looped-back syncs and certificates carry the
+reserved IDs 1 and 0 and are dropped by the far side's header check
+(`hdr_id_valid_chk`), so nothing circulates; the certificate's nonce stays
+zero because the ID 0 packets only ever reach the response-direction
+processor, whose nonce latch is unconnected.
+
 ## 6. Bring-up sequence
 
 1. **Link only, no interlock**: build the untouched MRMAC example design for
@@ -487,6 +529,11 @@ existing chain; everything from the drop FIFO onward stays.
 - ✓ MRMAC example design (100GAUI-1) synthesized, implemented and run on the
   VPK180 from `monster` (see the bring-up log above); the interlock RTL has
   not been synthesized for the VP1802 yet.
+- ✓ **Peer-facing image passes** (2026-09-25 11:26, `build/console_112559.log`):
+  `INLINE_TOPO=ilock`, the interlock alone between cage 3 and cage 1 — see §5
+  for the numbers (1001/1000 packets per second per side, RX good == total,
+  no errors). Two earlier "ilock" builds were silently the PS-direct design
+  (stale generated top in the shared project, §5); fixed in the build script.
 - ✓ **FCS fixed: the MAC appends the only FCS; rerun passes** (2026-09-25 10:32,
   `build/console_103225.log` bring-up, `build/console_103404.log` throughput,
   image WNS −0.079 ns on the same port-1 MRMAC↔GT receive path): with
@@ -572,8 +619,9 @@ existing chain; everything from the drop FIFO onward stays.
   independent of frequency; so `TIMER_END = 99_999` (1 ms buckets),
   `BKTS_PER_CERT = 1000` (one certificate per second), no extra MMCM, and the
   32-bit core path carries 3.2 Gb/s instead of the PolarFire's 2.56.
-- The PS-direct build (`INLINE_TOPO=psdirect`) carries the **workload
-  interlock** (`fabric_bridge`, TOP_KIND 1) with the runtime bypass;
+- The PS-direct build (`INLINE_TOPO=psdirect`) and the peer-facing build
+  (`INLINE_TOPO=ilock`) carry the **workload interlock** (`fabric_bridge`,
+  TOP_KIND 1) with the runtime bypass;
   `INLINE_CORE=0` selects the recomputation core instead. Bring-up program:
   `sw/mrmac_ilock_test.c` (sync/certificate cadence on both sides from the
   first tick, canonical requests and responses across, stale-bucket drop);

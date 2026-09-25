@@ -96,6 +96,11 @@ puts "### [exec {*}$cmd]"
 foreach f [get_files -quiet -of [current_fileset] *mrmac_0_exdes_imp_top.sv] { set_property IS_ENABLED 0 $f }
 foreach f [get_files -quiet -of [current_fileset] *imports/mrmac_0_exdes.sv] { set_property IS_ENABLED 0 $f }
 foreach f [get_files -quiet *dual_link/gen/*] { set_property IS_ENABLED 0 $f }
+# the other topology's generated top/wrappers/XDCs (build/inline/gen vs build/ilock/gen) also define mrmac_inline_top:
+# leave only the current $gen enabled, or synthesis silently takes the stale one (happened 2026-09-25)
+foreach f [concat [get_files -quiet */build/inline/gen/*] [get_files -quiet */build/ilock/gen/*]] {
+  if {[string first [file normalize $gen] [file normalize $f]] != 0} { set_property IS_ENABLED 0 $f }
+}
 set hdl [list $root/hdl/ps_frame_port.sv $root/hdl/axis_pkt_fifo.sv $root/hdl/axis_downsize.sv $root/hdl/axis_upsize.sv $root/hdl/axis2tse.sv \
               $root/hdl/tse2axis.sv $root/hdl/mac_port_shim.sv $root/hdl/mrmac_axis_adapt.sv $root/hdl/ilock_pl.sv \
               $root/hdl/passthru_ctl_axil.sv $root/../gateware/src/src_hdl/pkt_counter.sv $root/../gateware/src/src_hdl/sticky_bit.sv]

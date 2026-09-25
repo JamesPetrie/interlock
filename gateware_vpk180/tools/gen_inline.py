@@ -231,7 +231,7 @@ if PSD:
     ilock += ["// ---- PS frame port B: the virtual MAC on ilock_pl port 0 (injects into p0 RX, captures p0 TX) ----"]
     ilock += ps_inst("i_ps_b", "psb_axi", "pl0_ref_clk_0", "pl0_resetn_0", "pl0_ref_clk_0", "pl0_resetn_0", "v0_tx", "v0_rx", "1'b1", "v0_tx_tready")
 ilock += [
-          f"passthru_ctl_axil #(.NPORT({NP})) i_ctl (",
+          f"passthru_ctl_axil #(.NPORT({NP}), .ID(32'h{0x494C4B50 if a.no_gen else 0x494C4B31:08X})) i_ctl (",   # ID: ILKP peer-facing, ILK1 otherwise
           "    .aclk(pl0_ref_clk_0), .aresetn(pl0_resetn_0),",
           "    .s_axi_awaddr(ctl_axi_awaddr), .s_axi_awvalid(ctl_axi_awvalid), .s_axi_awready(ctl_axi_awready),",
           "    .s_axi_wdata(ctl_axi_wdata), .s_axi_wstrb(ctl_axi_wstrb), .s_axi_wvalid(ctl_axi_wvalid), .s_axi_wready(ctl_axi_wready),",

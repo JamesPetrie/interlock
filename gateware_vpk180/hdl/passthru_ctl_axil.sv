@@ -5,10 +5,11 @@
 //                   [9]         mode_core: 1 = the interlock core owns the ports, 0 = pass-through (reset: 0)
 //   0x04 STATUS ro  [3:0] led (ilock_pl: heartbeat, p0 frames, p1 frames, sticky drop)
 //                   [7:4] stat_mst_reset_done (AND over the ports)
-//   0x08 ID     ro  0x494C4B31 "ILK1"
+//   0x08 ID     ro  parameter ID: 0x494C4B31 "ILK1" (pass-through / PS-direct images), 0x494C4B50 "ILKP" (peer-facing)
 // Full-word writes only (wstrb ignored). Controls are quasi-static; the consumers synchronise them.
 module passthru_ctl_axil #(
-  parameter int unsigned NPORT = 4
+  parameter int unsigned NPORT = 4,
+  parameter logic [31:0] ID    = 32'h494C4B31
 ) (
   input  wire        aclk,
   input  wire        aresetn,
@@ -69,7 +70,7 @@ module passthru_ctl_axil #(
         case (s_axi_araddr[7:2])
           6'd0:    s_axi_rdata <= {22'd0, mode_core, pt_xover, {(8-NPORT){1'b0}}, ext_sel};
           6'd1:    s_axi_rdata <= {24'd0, mst_reset_done, led};
-          6'd2:    s_axi_rdata <= 32'h494C4B31;
+          6'd2:    s_axi_rdata <= ID;
           default: s_axi_rdata <= 32'h0;
         endcase
       end else if (s_axi_rready) begin

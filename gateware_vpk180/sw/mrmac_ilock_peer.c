@@ -38,11 +38,29 @@ static void report(const char *what, unsigned window_ms) {
                    st(p, 0xE30), st(p, 0xE38), st(p, 0xE40), st(p, 0xEE8), st(p, 0xF30), st(p, 0xF38), st(p, 0xCA8), st(p, 0xED8));
 }
 
+static void realign(void) { int a = 0; for (int i = 0; i < 6 && !a; i++) { a = wait_aligned(0, 1000) && wait_aligned(1, 1000); if (!a) gt_rx_datapath_reset(2); } }
+static void diag(void) {
+    xil_printf("--- diagnostics (nothing transmitted) ---\n\r");
+    for (int p = 0; p < NPORT; p++) { mrmac_base = PORT_BASE[p]; xil_printf("  port %d: TX_REG1 0x%03x RX_REG1 0x%02x rx_status 0x%x\n\r", p, *(U32 *)(MRMAC_0_CONFIGURATION_TX_REG1_0), *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0), mac_rx_status()); }
+    tick(0); tick(1); usleep(100000); tick(0); tick(1);
+    xil_printf("  TX cycle count / 100 ms: port 0 %u, port 1 %u (should be ~39.06 M at 390.625 MHz)\n\r", st(0, 0x800), st(1, 0x800));
+    CTL_REG = 0x303; report("D1: CTL 0x303 (ext bits set too)", 1000);
+    CTL_REG = 0x100; usleep(20000); CTL_REG = 0x300; report("D2: core reset toggled (0x100 -> 0x300)", 1000);
+    CTL_REG = 0x000; usleep(20000); CTL_REG = 0x200; report("D3: xover off, core on (0x200)", 1000);
+    CTL_REG = 0x300;
+    for (int p = 0; p < NPORT; p++) { mrmac_base = PORT_BASE[p]; mac_config(); }
+    usleep(50000); realign(); report("D4: MACs reconfigured after the core release", 1000);
+    for (int p = 0; p < NPORT; p++) { mrmac_base = PORT_BASE[p]; *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0) = 0x33; }
+    report("D5: RX_REG1 0x33 (FCS stripped) on both", 1000);
+    CTL_REG = 0x100; usleep(20000); CTL_REG = 0x300; report("D6: core reset toggled again", 1000);
+}
+
 int main(void)
 {
     Xil_ExceptionRegisterHandler(XIL_EXCEPTION_ID_SYNC_INT, sync_abort, NULL);
     xil_printf("\n\r*** VPK180 peer-facing interlock (fabric_bridge, 1 ms buckets): cage 3 = port 0, cage 1 = port 1 ***\n\r");
     xil_printf("control block ID 0x%08x\n\r", ID_REG);
+    if (ID_REG != 0x494C4B50) { xil_printf("RESULT: WRONG IMAGE (expected the peer-facing ID 0x494C4B50)\n\r"); return 0; }
     for (int p = 0; p < NPORT; p++) { mrmac_base = PORT_BASE[p]; mac_config(); }
     CTL_REG = 0x100;                                                         /* core held in reset (bypass mode) during link bring-up */
     *(U32 *)(MRMAC_0_GT_LINERATE_RESET) = 0x4B000F02;
@@ -67,6 +85,7 @@ int main(void)
     usleep(1000000);
     for (int p = 0; p < NPORT; p++) { tick(p); unsigned t = st(p, 0xE30), g = st(p, 0xE38); if (t == 0 || t != g || st(p, 0xEE8) || st(p, 0xF30)) ok = 0; }
     xil_printf("RESULT: %s\n\r", ok ? "PASS (both RX sides: good == total, no FCS/length errors)" : "CHECK (see counters)");
+    if (!ok) diag();
     xil_printf("done\n\r");
     return 0;
 }
