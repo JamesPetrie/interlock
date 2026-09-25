@@ -72,6 +72,17 @@ module axis_pkt_fifo #(
 
   wire out_free = !tvalid_r || m_tready;
 
+  // ------------------------------------------------------------------
+  // Storage — no reset on the array or the read register so that synthesis
+  // maps it to block RAM (an async-reset process is not BRAM-inferable)
+  // ------------------------------------------------------------------
+  wire wr_en = s_tvalid && !dropping && !full;
+  wire rd_en = (!rd_valid || out_free) && (rd_ptr != wr_cmt);
+  always_ff @(posedge clk) begin
+    if (wr_en) mem[wr_ptr[ADDR_W-1:0]] <= {s_tlast, s_tkeep, s_tdata};
+    if (rd_en) rd_data <= mem[rd_ptr[ADDR_W-1:0]];
+  end
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       wr_ptr   <= '0;
@@ -80,7 +91,6 @@ module axis_pkt_fifo #(
       dropping <= 1'b0;
       drop_ovf <= 1'b0;
       drop_err <= 1'b0;
-      rd_data  <= '0;
       rd_valid <= 1'b0;
       tvalid_r <= 1'b0;
       tlast_r  <= 1'b0;
@@ -98,8 +108,7 @@ module axis_pkt_fifo #(
           wr_ptr   <= wr_cmt;                    // abandon what was written
           drop_ovf <= 1'b1;
           if (!s_tlast) dropping <= 1'b1;        // and discard the remainder
-        end else begin
-          mem[wr_ptr[ADDR_W-1:0]] <= {s_tlast, s_tkeep, s_tdata};
+        end else begin                           // stored by the storage process (wr_en)
           wr_ptr <= wr_ptr + ptr_t'(1);
           if (s_tlast) begin
             if (s_tuser) begin
@@ -118,8 +127,7 @@ module axis_pkt_fifo #(
         if (rd_valid) {tlast_r, tkeep_r, tdata_r} <= rd_data;
       end
       if (!rd_valid || out_free) begin
-        if (rd_ptr != wr_cmt) begin
-          rd_data  <= mem[rd_ptr[ADDR_W-1:0]];
+        if (rd_ptr != wr_cmt) begin              // fetched by the storage process (rd_en)
           rd_ptr   <= rd_ptr + ptr_t'(1);
           rd_valid <= 1'b1;
         end else begin

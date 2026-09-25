@@ -1,6 +1,6 @@
 // batch_buffer — format-agnostic ping-pong packet store
 
-module batch_buffer
+module batch_buffer_ref
   // import is what makes the eth_pkg dependency visible to Libero's
   // compile-order scanner; qualified references alone are not tracked
   import eth_pkg::*;
@@ -96,13 +96,7 @@ module batch_buffer
 
   ptr_t        rd_ptr;     // next word to read; leads the emitted beat by the read latency
   ptr_t        rd_limit;   // frozen committed pointer of the drain bank
-  // Registered RAM reads. The banks and their read registers live in a reset-free
-  // process (a memory touched by an async-reset process is not block-RAM inferable
-  // in Vivado); the FSM latches which bank it read into rd_sel_q, so rd_data has
-  // exactly the value and timing of the former registered read.
-  logic [31:0] rd_q0, rd_q1;
-  logic [1:0]  rd_sel_q;
-  wire  [31:0] rd_data = rd_sel_q[1] ? (rd_sel_q[0] ? rd_q1 : rd_q0) : '0;
+  logic [31:0] rd_data;    // registered RAM read
   logic [15:0] rd_pkt_len;  // current record's length prefix
   ptr_t        rd_rec_end;  // next record's prefix = end of the current record
   logic        emit_first;  // set at a record's first beat, cleared once it leaves
@@ -132,23 +126,6 @@ module batch_buffer
                        :                             4'b1111;
 
   // ------------------------------------------------------------------
-  // Bank storage access (no reset): the same conditions the FSM below
-  // steps on, so writes and reads land in the same cycles as before.
-  // ------------------------------------------------------------------
-  wire        mem_we    = (fstate == F_ADMIT) ? (tvalid_s && !in_delimiter)
-                        : (fstate == F_DATA)  ? in_handshake : 1'b0;
-  wire [31:0] mem_wdata = (fstate == F_ADMIT) ? {16'h0, tuser_s} : tdata_s;
-  wire        mem_re    = (dstate == D_PFX_RD) || (dstate == D_PFX_LD) || (dstate == D_EMIT && out_free);
-  always_ff @(posedge clk) begin
-    if (mem_we &&  fill_sel) mem1[wr_ptr] <= mem_wdata;
-    if (mem_we && !fill_sel) mem0[wr_ptr] <= mem_wdata;
-    if (mem_re) begin
-      rd_q0 <= mem0[rd_ptr];
-      rd_q1 <= mem1[rd_ptr];
-    end
-  end
-
-  // ------------------------------------------------------------------
   // Sequential
   // ------------------------------------------------------------------
   always_ff @(posedge clk or negedge rst_n) begin
@@ -162,7 +139,7 @@ module batch_buffer
       dstate     <= D_IDLE;
       rd_ptr     <= '0;
       rd_limit   <= '0;
-      rd_sel_q   <= 2'b00;
+      rd_data    <= '0;
       rd_pkt_len <= '0;
       rd_rec_end <= '0;
       emit_first <= 1'b0;
@@ -185,7 +162,8 @@ module batch_buffer
           // inject the length prefix ahead of the packet's first word;
           // beat #0 waits out this cycle (tready_s low here)
           if (tvalid_s && !in_delimiter) begin
-            // prefix word written by the storage process (mem_we)
+            if (fill_sel) mem1[wr_ptr] <= {16'h0, tuser_s};
+            else          mem0[wr_ptr] <= {16'h0, tuser_s};
             wr_ptr <= wr_ptr + ptr_t'(1);
             fstate <= F_DATA;
           end
@@ -193,7 +171,8 @@ module batch_buffer
 
         F_DATA: begin
           if (in_handshake) begin
-            // data word written by the storage process (mem_we)
+            if (fill_sel) mem1[wr_ptr] <= tdata_s;
+            else          mem0[wr_ptr] <= tdata_s;
             wr_ptr <= wr_ptr + ptr_t'(1);
             if (tlast_s) begin
               // commit the record — or abandon it on the drop flag
@@ -223,8 +202,8 @@ module batch_buffer
 
         D_PFX_RD: begin
           // fetch the prefix word
-          rd_sel_q <= drain_sel;          // the storage process reads mem[rd_ptr] this cycle (mem_re)
-          rd_ptr   <= rd_ptr + ptr_t'(1);
+          rd_data <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0; // TODO separate these from the FSM always
+          rd_ptr  <= rd_ptr + ptr_t'(1);
           dstate  <= D_PFX_LD;
         end
 
@@ -235,7 +214,7 @@ module batch_buffer
           rd_rec_end <= rd_ptr + ptr_t'((rd_data[15:0] + 16'd3) >> 2);
           // fetch the first data word
           emit_first <= 1'b1;
-          rd_sel_q   <= drain_sel;
+          rd_data    <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0;
           rd_ptr     <= rd_ptr + ptr_t'(1);
           dstate     <= D_EMIT;
         end
@@ -251,7 +230,7 @@ module batch_buffer
             tlast_m_r  <= emit_last;
             tuser_m_r  <= emit_first ? rd_pkt_len : 16'h0;
             // fetch the next data (could also be new prefix)
-            rd_sel_q   <= drain_sel;
+            rd_data    <= drain_sel[1] ? (drain_sel[0] ? mem1[rd_ptr] : mem0[rd_ptr]) : '0;
             rd_ptr     <= rd_ptr + ptr_t'(1);
 
             if (emit_last) begin

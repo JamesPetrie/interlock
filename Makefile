@@ -40,7 +40,7 @@ lint:
 
 # ---- VPK180 port (gateware_vpk180/) ----------------------------------------
 W ?= 64
-VPK180_TESTS := test_axis_downsize test_axis_upsize test_axis_pkt_fifo test_axis2tse test_tse2axis test_mac_port_shim
+VPK180_TESTS := test_axis_downsize test_axis_upsize test_axis_pkt_fifo test_axis2tse test_tse2axis test_mac_port_shim test_ilock_pl_passthru test_ps_frame_port test_ilock_pl_bypass test_batch_buffer_equiv
 
 test-vpk180: .venv
 	@for t in $(VPK180_TESTS); do \
