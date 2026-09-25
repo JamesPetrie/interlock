@@ -29,7 +29,7 @@ static const unsigned long PORT_BASE[2] = { 0xA4090000UL, 0xA4A00000UL };
 static void sync_abort(void *d) { xil_printf("\n\rSYNC ABORT\n\r"); while (1) ; }
 static void mac_config(void) {
     *(U32 *)(MRMAC_0_RESET_REG_0) = 0xFFFFFFFF; *(U32 *)(MRMAC_0_MODE_REG_0) = 0x40000A64;
-    *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0) = 0x00000033; *(U32 *)(MRMAC_0_CONFIGURATION_TX_REG1_0) = 0x00000C03;
+    *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0) = (mrmac_base == PORT_BASE[1]) ? 0x00000031 : 0x00000033; *(U32 *)(MRMAC_0_CONFIGURATION_TX_REG1_0) = 0x00000C03;   /* core ingress keeps the FCS */
     *(U32 *)(MRMAC_0_FEC_CONFIGURATION_REG1_0) = 0x0000000A; *(U32 *)(MRMAC_0_RESET_REG_0) = 0x00000000;
 }
 static unsigned mac_rx_status(void) { *(U32 *)(MRMAC_0_STAT_RX_STATUS_REG1_0) = 0xFFFFFFFF; return (*(U32 *)(MRMAC_0_STAT_RX_STATUS_REG1_0)) & 0x7; }
@@ -110,7 +110,7 @@ static void run(const char *tag, unsigned F, unsigned len, unsigned period_us, u
     poll_sync();
     unsigned syncs = cur_bucket - bclr;                                      /* one compute-side sync per bucket also leaves on cage 1 */
     int data_fwd = (int)tx1 - (int)syncs, lost = (int)F - data_fwd;
-    unsigned us = (unsigned)(t1 - t0), wire = len + 4;
+    unsigned us = (unsigned)(t1 - t0), wire = len;                         /* B's 4 pad bytes are dropped by the core, the MAC FCS takes their place */
     xil_printf("  %s %4u B x %u: %6u us, sent %u Mb/s | cage 1 TX %u (- %u syncs = %d data), cage 3 RX total %u good %u | lost ~%d (%d.%02d%%) | %u buckets, %u guard waits\n\r",
                tag, len, F, us, (unsigned)((unsigned long long)F * wire * 8 / us), tx1, syncs, data_fwd, rt0, rx0,
                lost, lost * 100 / (int)F, (lost * 10000 / (int)F) % 100, cur_bucket - b0, (unsigned)guarded);
@@ -133,7 +133,7 @@ int main(void)
     static const unsigned sizes[] = { 1514, 512, 128 };                   /* 1514 = 14 + 64 + 1436: the largest canonical frame */
     for (unsigned s = 0; s < 3; s++) {
         unsigned n = build_request(sizes[s] - ETH_HDR - CANON_HDR); ps_load(txf, n);   /* n = size + 4 pad */
-        unsigned wire = n + 4;                                               /* + MAC FCS */
+        unsigned wire = n;                                                   /* = frame + MAC FCS (the core emits no FCS of its own) */
         unsigned p1000 = (unsigned)((unsigned long long)wire * 8 / 1000);    /* period for 1.0 Gb/s on the wire */
         run("max rate, no guard ", 20000, n, 0, 0, &id);
         run("max rate, guard 25us", 20000, n, 0, 25, &id);

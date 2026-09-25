@@ -30,11 +30,11 @@ case "${1:-}" in
                   "$HERE/build/dual_link/vitis/mrmac_dual/src/lscript.ld" "$HERE/build/dual_link/sw/mrmac_dual_test.c" ;;
   inline-build) "$VIVADO" -mode batch -nojournal -log "$LOG" -source "$HERE/scripts/inline_build.tcl" -tclargs "${INLINE_NPORTS:-4}" "${INLINE_TOPO:-plain}" ;;   # INLINE_NPORTS=2: pass-through pair only; INLINE_TOPO=psdirect: PS frame ports + core
   inline-sw) # the PS side is identical to the two-port build (same CIPS block, same PL peripherals), so its BSP is reused
-             python3 "$HERE/tools/gen_dual_sw.py" "$(ls "$HERE"/build/exdes/*/*.gen/sources_1/ip/mrmac_0/sample_c_files/mrmac_exdes_test.c | head -1)" "$HERE/build/inline/sw" "${INLINE_APP:-$([ "${INLINE_TOPO:-plain}" = psdirect ] && echo mrmac_psdirect_test.c || echo mrmac_inline_test.c)}" \
-             && PSAPP_CFLAGS="-DNPORT=${INLINE_NPORTS:-4}" bash "$HERE/scripts/build_ps_app.sh" "$HERE/build/inline/mrmac_inline.elf" \
+             D="$HERE/build/$([ "${INLINE_TOPO:-plain}" = ilock ] && echo ilock || echo inline)"; python3 "$HERE/tools/gen_dual_sw.py" "$(ls "$HERE"/build/exdes/*/*.gen/sources_1/ip/mrmac_0/sample_c_files/mrmac_exdes_test.c | head -1)" "$D/sw" "${INLINE_APP:-$([ "${INLINE_TOPO:-plain}" = psdirect ] && echo mrmac_psdirect_test.c || echo mrmac_inline_test.c)}" \
+             && PSAPP_CFLAGS="-DNPORT=${INLINE_NPORTS:-4}" bash "$HERE/scripts/build_ps_app.sh" "$D/mrmac_inline.elf" \
                   "$HERE/build/dual_link/vitis/plat_mrmac_dual_link/export/plat_mrmac_dual_link/sw/plat_mrmac_dual_link/standalone_domain" \
-                  "$HERE/build/dual_link/vitis/mrmac_dual/src/lscript.ld" "$HERE/build/inline/sw/${INLINE_APP:-$([ "${INLINE_TOPO:-plain}" = psdirect ] && echo mrmac_psdirect_test.c || echo mrmac_inline_test.c)}" ;;   # INLINE_APP=<file in sw/> overrides
-  inline-run) bash "$HERE/scripts/link_run.sh" "$(ls "$HERE"/build/inline/*.pdi | head -1)" "$HERE/build/inline/mrmac_inline.elf" "${2:-200}" ;;
+                  "$HERE/build/dual_link/vitis/mrmac_dual/src/lscript.ld" "$D/sw/${INLINE_APP:-$([ "${INLINE_TOPO:-plain}" = psdirect ] && echo mrmac_psdirect_test.c || echo mrmac_inline_test.c)}" ;;   # INLINE_APP=<file in sw/> overrides
+  inline-run) D="$HERE/build/$([ "${INLINE_TOPO:-plain}" = ilock ] && echo ilock || echo inline)"; bash "$HERE/scripts/link_run.sh" "$(ls "$D"/*.pdi | head -1)" "$D/mrmac_inline.elf" "${2:-200}" ;;
   dual-run)  bash "$HERE/scripts/link_run.sh" "$(ls "$HERE"/build/dual_link/*.pdi | head -1)" "$HERE/build/dual_link/mrmac_dual.elf" "${2:-150}" ;;
   build)     "$VIVADO" -mode batch -nojournal -log "$LOG" -source "$HERE/scripts/build.tcl" ;;
   program)   "$VIVADO" -mode batch -nojournal -log "$LOG" -source "$HERE/scripts/program.tcl" -tclargs "${2:-localhost:3121}" ;;

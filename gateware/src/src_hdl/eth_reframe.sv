@@ -1,7 +1,7 @@
 // eth_reframe — Ethernet-layer egress adapter: data in as
 // AXI-Stream, CoreTSE MAC-FIFO frame out.
 //
-// Builds   [HEADER][DATA]<[PAD]>[FCS]
+// Builds   [HEADER][DATA]<[PAD]>          (FCS left to the MAC — VPK180 MRMAC)
 //
 // Byte shift register in lock-step: the header is preloaded at SOP, then each
 // cycle one MAC word leaves the head while one AXI beat enters the tail; once
@@ -108,7 +108,10 @@ module eth_reframe #(
   // header / DATA / PAD alike, 4 bytes per emitted word. After the last body
   // word, F_FOLD_PEN spends one bubble cycle folding the penultimate word's tail
   // bytes, so the EMIT_PEN / EMIT_LAST states read a fully registered CRC.
-  wire [31:0] fcs = crc32_final(crc_rem);
+  // FCS computed but not emitted (see F_EMIT_PEN): the fcs bytes in pen_dat
+  // land in lanes that o_bv marks invalid, forced to zero for a clean wire.
+  wire [31:0] fcs = 32'h0;
+  wire [31:0] unused_crc = crc32_final(crc_rem);
 
   wire [31:0] pen_dat =
       (tail_bytes == 2'd1) ? {fcs[23:0], buffer[ 7:0]}   :
@@ -208,12 +211,17 @@ module eth_reframe #(
         end
 
         F_EMIT_PEN: begin
-          // last body bytes, plus the first FCS bytes when not aligned
+          // last body bytes; the FCS is NOT emitted (the MRMAC appends it and
+          // cannot be told not to), so this is the final word. A 4-byte FCS
+          // would leave exactly as many unused lanes as the body tail does,
+          // hence last_bv applies unchanged. F_EMIT_LAST is never entered.
           if (out_free) begin
             o_rdy <= 1'b1;
             o_dat <= pen_dat;
+            o_eof <= 1'b1;
+            o_bv  <= last_bv;
             sent  <= sent_next;
-            state <= F_EMIT_LAST;
+            state <= F_IDLE;
           end
         end
 

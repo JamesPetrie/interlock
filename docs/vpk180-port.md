@@ -153,26 +153,53 @@ The RX drop FIFO defaults to 1024 beats (two maximum frames at 64 b; many more
 at 384 b). LED 3 latches if anything was ever dropped, so a silent link with
 LED 3 lit means "overloaded or bad frames", not "no traffic".
 
-### 3.2 Byte order and framing — why `eth_deframe`/`eth_reframe` need no change
+### 3.2 Byte order and framing — FCS handling (`eth_reframe` changed)
 
 Both the CoreTSE bundle and the MRMAC stream put the first wire byte of a
-beat in bits [7:0]. `eth_deframe` expects the FCS **present** in the RX stream
-(it drops it by LENGTH) and `eth_reframe` **computes and appends** the FCS
-itself. So the MRMAC must be configured for FCS pass-through:
+beat in bits [7:0], so no byte swapping is needed. The FCS, however, needed a
+core change:
+
+- `eth_deframe` expects the FCS **present** in the RX stream: on the EOF word
+  it drops the last 4 bytes (`eth_deframe.sv`, the `>> 4`), and forwards
+  exactly LENGTH octets.
+- `eth_reframe` originally **computed and appended** the FCS itself. The plan
+  was FCS pass-through on the MRMAC (`ctl_tx_fcs_ins_enable = 0`), but that
+  does not work on the hard MAC: with insertion disabled (`TX_REG1` 0xC02 or
+  0xC06, written live or under a full MAC reset) the transmitter emits
+  **nothing** — TX total 0, no bad-FCS / frame-error counts, nothing at the
+  far cage — both for the core's frames and for clean 118-byte frames from
+  the PS frame port carrying a correct software-computed FCS (2026-09-25,
+  `sw/mrmac_fcs_test.c`, `build/console_095258.log`). Setting the bit back
+  restores traffic at once. With both FCSs present (reframer + MAC) the far
+  MAC counted every core frame as an in-range length error (payload 4 bytes
+  longer than LENGTH) although it still delivered them; the core's own FCS
+  was verified correct by recomputation.
+- Resolution: `eth_reframe` no longer emits the FCS. `F_EMIT_PEN` is now the
+  last word (EOF, `last_bv` unchanged — a 4-byte FCS leaves exactly as many
+  unused lanes as the body tail does), `F_EMIT_LAST` is unreachable and the
+  CRC is still folded but unused (`fcs` forced to zero for clean lanes). This
+  is an **in-place change to the shared core RTL**: the PolarFire build now
+  needs its CoreTSE to insert the FCS (or the change parameterised) — to be
+  sorted out separately.
+
+MRMAC settings per port, applied under MAC reset in the bring-up sequence:
 
 | MRMAC control | value | effect |
 |---|---|---|
-| `ctl_rx_delete_fcs` | 0 | leave the FCS on RX frames |
+| `ctl_tx_fcs_ins_enable` | 1 | the MAC appends the (only) FCS — `TX_REG1` = 0xC03 |
+| `ctl_tx_ignore_fcs` | 0 | n/a with insertion on |
+| `ctl_rx_delete_fcs` | 0 on core-ingress ports | leave the FCS on RX frames; the deframer drops those 4 bytes — `RX_REG1` = 0x31 |
 | `ctl_rx_ignore_fcs` | 0 | still check it; bad frames get `tkeep_user[8]` and the shim drops them |
-| `ctl_tx_fcs_ins_enable` | 0 | do not add a second FCS on TX |
-| `ctl_tx_ignore_fcs` | 0 | (checks the FCS we append; set 1 only for debugging) |
 | preamble | default (MAC-generated) | custom preamble mode off |
 | pause / PFC | off | matches the PolarFire build (no flow control) |
 | min/max frame | defaults (64 / MTU 1518+) | canonical packets stay ≤ 1500 payload |
 
-These are AXI-Lite register bits (PG314 `CONFIGURATION_RX_REG1_<port>`,
-`CONFIGURATION_TX_REG1_<port>`); they are set wherever the bring-up sequence
-lives (example-design state machine or PS software).
+In the PS-direct image cage 3 (port 0) feeds frame port A and keeps
+`RX_REG1` = 0x33 (FCS stripped, A captures LENGTH-sized frames); the direct
+port B has no MAC, so its injected frames carry 4 pad bytes where the
+deframer expects the FCS. Register offsets/bits: PG314 register map v1.4
+(`CONFIGURATION_TX_REG1` 0x000C bit 1 / bit 2, `CONFIGURATION_RX_REG1`
+0x0010 bit 1 / bit 2).
 
 ### 3.3 Control plane
 
@@ -460,6 +487,16 @@ existing chain; everything from the drop FIFO onward stays.
 - ✓ MRMAC example design (100GAUI-1) synthesized, implemented and run on the
   VPK180 from `monster` (see the bring-up log above); the interlock RTL has
   not been synthesized for the VP1802 yet.
+- ✓ **FCS fixed: the MAC appends the only FCS; rerun passes** (2026-09-25 10:32,
+  `build/console_103225.log` bring-up, `build/console_103404.log` throughput,
+  image WNS −0.079 ns on the same port-1 MRMAC↔GT receive path): with
+  `eth_reframe` no longer emitting its FCS (§3.2) and cage 1 RX keeping the
+  FCS (0x31), the 1 ms bring-up repeats exactly — 2500 syncs in 2.5 s
+  (now 78 B on the wire), certificates 238 B, requests/responses of 64..1436 B
+  payload forwarded verbatim with no trailing bytes, stale bucket dropped —
+  and the throughput test reports cage 3 RX **good == total** in every run
+  (e.g. 20217/20217 at 1518 B): no more length errors. Rates unchanged:
+  1.0 Gb/s lossless with the 25 µs guard, ~1 % tick loss unguarded.
 - ✓ **Throughput through the workload interlock, request direction** (2026-09-25
   09:14, `sw/mrmac_bw_test.c`, `build/console_091355.log`): frames stamped by
   the PS (ID and bucket patched per frame, bucket from the sync packets read
@@ -484,9 +521,9 @@ existing chain; everything from the drop FIFO onward stays.
   the response direction (needs a receive counter on the direct-attached frame
   port) and the core's own ceiling (2.56 Gb/s bank limit / 3.2 Gb/s path; needs
   hardware ID/bucket stamping to exceed the PS rate). A72 → PL AXI-Lite: 129 ns
-  per write, 249 ns per read. Cage 3 counts core frames as length errors
-  (double FCS: reframer + MAC), still delivered; to be cleaned up by turning
-  off FCS insertion on the MAC in core mode (`TX_REG1` bit 1 is not that bit).
+  per write, 249 ns per read. In this reference image cage 3 counted core
+  frames as length errors (double FCS: reframer + MAC), still delivered;
+  resolved afterwards in `eth_reframe` (§3.2), see the entry above.
 - ✓ **Workload interlock live on the fibre, 1 ms buckets** (2026-09-25 08:47,
   `build/console_084702.log`): with `fabric_bridge` switched in at t=0 the
   frontend port sees a sync packet every bucket (2475 in 2.5 s, buckets

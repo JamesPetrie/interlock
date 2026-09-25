@@ -7,7 +7,9 @@
  * Phase 2: requests stamped from the frontend sync (bucket + 1) forwarded to A; responses stamped from
  *          the compute sync forwarded to B; a stale-bucket request is dropped.
  * Wire format per docs/verification-protocol.md: 802.3 LENGTH = 64 + PLD_LEN, big-endian fields.
- * Injected frames carry 4 pad bytes after the DATA in place of an FCS; core frames carry the reframer's FCS. */
+ * FCS: the core's reframer emits none (the MRMAC appends it, TX 0xC03); the core's deframer drops the last 4 bytes
+ * of every frame, so cage 1 RX (core ingress) keeps the FCS (RX 0x31) and frames injected on the direct port B carry
+ * 4 pad bytes in its place. Cage 3 RX (feeds frame port A) strips it (0x33). */
 #include "mrmac_exdes_test_patched.inc"
 #include "xil_exception.h"
 #include "sleep.h"
@@ -45,7 +47,7 @@ static void sync_abort(void *d) {
 static void mac_config(void) {
     *(U32 *)(MRMAC_0_RESET_REG_0) = 0xFFFFFFFF;
     *(U32 *)(MRMAC_0_MODE_REG_0) = 0x40000A64;
-    *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0) = 0x00000033;
+    *(U32 *)(MRMAC_0_CONFIGURATION_RX_REG1_0) = (mrmac_base == PORT_BASE[1]) ? 0x00000031 : 0x00000033;   /* core ingress keeps the FCS */
     *(U32 *)(MRMAC_0_CONFIGURATION_TX_REG1_0) = 0x00000C03;
     *(U32 *)(MRMAC_0_FEC_CONFIGURATION_REG1_0) = 0x0000000A;
     *(U32 *)(MRMAC_0_RESET_REG_0) = 0x00000000;
@@ -100,8 +102,8 @@ static unsigned build(unsigned char *f, int response, unsigned bucket, unsigned 
     unsigned x = seed * 2654435761u + 7u;
     if (!response) for (int i = 32; i < 64; i++) { x = x * 1103515245u + 12345u; h[i] = (unsigned char)(x >> 16); }   /* KEY_COMMIT */
     for (unsigned i = 0; i < pld_len; i++) { x = x * 1103515245u + 12345u; h[CANON_HDR + i] = (unsigned char)(x >> 16); }
-    for (int i = 0; i < 4; i++) f[ETH_HDR + n + i] = 0;
-    return ETH_HDR + n + 4;
+    for (int i = 0; i < 4; i++) f[ETH_HDR + n + i] = 0;                    /* requests enter on the direct port B: pad in place of an FCS */
+    return ETH_HDR + n + (response ? 0 : 4);                                /* responses enter through cage 3's MAC, which appends the FCS */
 }
 /* wait for a sync on port b (skipping anything else), return its bucket; 0xFFFFFFFF on timeout */
 static unsigned next_sync(unsigned long b, unsigned us) {

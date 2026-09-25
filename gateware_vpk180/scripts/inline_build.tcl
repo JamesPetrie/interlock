@@ -10,14 +10,15 @@ set here [file dirname [file normalize [info script]]]
 set root [file normalize $here/..]
 source $root/params.tcl
 set nports [expr {[llength $argv] ? [lindex $argv 0] : 4}]   ;# 2 = pass-through pair only (reflect test), 4 = with endpoints
-set topo   [expr {[llength $argv] > 1 ? [lindex $argv 1] : "plain"}]   ;# plain | psdirect (PS frame ports, recomp core + runtime bypass)
+set topo   [expr {[llength $argv] > 1 ? [lindex $argv 1] : "plain"}]   ;# plain | psdirect (PS frame ports + core) | ilock (peer-facing: core between the two MRMACs, no generators)
 puts "### topology: $topo"
 puts "### ports: $nports"
 set xpr [glob -nocomplain $root/build/exdes/*/*.xpr]
 if {[llength $xpr] != 1} { error "expected one example project under build/exdes: $xpr" }
 open_project [lindex $xpr 0]
 set proj [file dirname [lindex $xpr 0]]
-set gen $root/build/inline/gen
+set out [expr {$topo eq "ilock" ? "$root/build/ilock" : "$root/build/inline"}]
+set gen $out/gen
 file mkdir $gen
 
 # ---- MRMAC clones. The IP only accepts the example GT site adjacent to the MRMAC site; learn it
@@ -78,6 +79,8 @@ set cmd [list python3 $root/tools/gen_inline.py $proj/imports $gen --nports $npo
 # 100 MHz, one certificate per 1000 buckets; INLINE_CORE=0 selects the recomputation core instead
 set core_kind [expr {[info exists ::env(INLINE_CORE)] ? $::env(INLINE_CORE) : 1}]
 if {$topo eq "psdirect"} { lappend cmd --ps-direct --core-kind $core_kind --runtime-bypass --timer-end 99999 --bkts-per-cert 1000 }
+# ilock: the peer-facing design — the interlock between the two MRMACs, nothing generating traffic on the FPGA
+if {$topo eq "ilock"}    { lappend cmd --no-gen --core-kind $core_kind --runtime-bypass --timer-end 99999 --bkts-per-cert 1000 }
 lappend cmd \
   --port 0:mrmac_0:[expr {$PORT0_GT_CHAN ? "mrmac_0_gtwiz_d1" : "mrmac_0_gtwiz_versal"}]:$PORT0_GT_CHAN:$PORT0_GT_QUAD:$PORT0_GT_REFCLK \
   --port 1:mrmac_1:mrmac_0_gtwiz_versal:$PORT1_GT_CHAN:$PORT1_GT_QUAD:$PORT1_GT_REFCLK
@@ -96,7 +99,7 @@ foreach f [get_files -quiet *dual_link/gen/*] { set_property IS_ENABLED 0 $f }
 set hdl [list $root/hdl/ps_frame_port.sv $root/hdl/axis_pkt_fifo.sv $root/hdl/axis_downsize.sv $root/hdl/axis_upsize.sv $root/hdl/axis2tse.sv \
               $root/hdl/tse2axis.sv $root/hdl/mac_port_shim.sv $root/hdl/mrmac_axis_adapt.sv $root/hdl/ilock_pl.sv \
               $root/hdl/passthru_ctl_axil.sv $root/../gateware/src/src_hdl/pkt_counter.sv $root/../gateware/src/src_hdl/sticky_bit.sv]
-if {$topo eq "psdirect"} {                                  ;# the interlock core RTL (shared with the PolarFire build)
+if {$topo eq "psdirect" || $topo eq "ilock"} {              ;# the interlock core RTL (shared with the PolarFire build)
   set fh [open $root/core_sources.vc r]
   foreach l [split [read $fh] "\n"] { set l [string trim $l]; if {$l ne "" && ![string match #* $l]} { lappend hdl [file normalize $root/$l] } }
   close $fh
@@ -143,12 +146,12 @@ set want [list $PORT0_GT_QUAD $PORT0_GT_REFCLK $PORT1_GT_QUAD $PORT1_GT_REFCLK]
 if {$nports == 4} { lappend want $PORT2_GT_QUAD $PORT2_GT_REFCLK $PORT3_GT_QUAD $PORT3_GT_REFCLK }
 foreach site $want { if {[llength [get_cells -hier -quiet -filter "LOC == $site"]] == 0} { puts "### nothing placed at $site"; set bad 1 } }
 if {$bad || $nq != 2 * $nports} { error "transceiver placement check failed (got $nq cells, bad=$bad)" }
-report_timing_summary -file $root/build/inline/timing_summary.rpt
-report_utilization    -file $root/build/inline/utilization.rpt
+report_timing_summary -file $out/timing_summary.rpt
+report_utilization    -file $out/utilization.rpt
 puts "### WNS: [get_property STATS.WNS [get_runs impl_1]]"
 foreach f [glob -nocomplain [get_property DIRECTORY [get_runs impl_1]]/*.pdi] {
-  file copy -force $f $root/build/inline/
-  puts "### PDI: $root/build/inline/[file tail $f]"
+  file copy -force $f $out/
+  puts "### PDI: $out/[file tail $f]"
 }
-write_hw_platform -fixed -include_bit -force -file $root/build/inline/mrmac_inline.xsa
-puts "### XSA: $root/build/inline/mrmac_inline.xsa"
+write_hw_platform -fixed -include_bit -force -file $out/mrmac_inline.xsa
+puts "### XSA: $out/mrmac_inline.xsa"

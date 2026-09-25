@@ -23,6 +23,8 @@ ap.add_argument("--nports", type=int, default=4, choices=[2, 4])
 ap.add_argument("--ps-direct", action="store_true",
                 help="2-port topology with PS frame ports: A behind port 0's MRMAC (via ext), B attached straight to ilock_pl port 0")
 ap.add_argument("--core-kind", type=int, default=2, help="ilock_pl TOP_KIND: 0 recomp core, 1 fabric bridge, 2 pass-through only")
+ap.add_argument("--no-gen", action="store_true",
+                help="peer-facing design: every MRMAC TX is driven by ilock_pl (ext_sel tied to 1); the example generator/monitor and the PS frame ports are left out")
 ap.add_argument("--runtime-bypass", action="store_true", help="ilock_pl RUNTIME_BYPASS (core + pass-through switch, CTL[9] selects)")
 ap.add_argument("--timer-end", type=int, default=99_999, help="ilock_pl TIMER_END in core_clk cycles (100 MHz PL clock: 99_999 = 1 ms buckets)")
 ap.add_argument("--bkts-per-cert", type=int, default=1000, help="ilock_pl BKTS_PER_CERT (1000 x 1 ms = one certificate per second)")
@@ -132,7 +134,8 @@ def port_inst(n):
     t, k4 = re.subn(r"\.gt_(rxn_in|rxp_in|txn_out|txp_out|ref_clk_p|ref_clk_n)\s*\(\s*gt_\w+\s*\)",
                     lambda m: f".gt_{m.group(1)} (gt{n}_{m.group(1)})", t)
     assert (k1, k2, k3, k4) == (16, 16, 1, 6), (k1, k2, k3, k4)
-    ext = [f"    .ext_sel (ext_sel[{n}]),", f"    .ext_axi_clk (p{n}_axi_clk),", f"    .ext_axi_rst_n (p{n}_axi_rst_n),",
+    sel = "1'b1" if a.no_gen else f"ext_sel[{n}]"
+    ext = [f"    .ext_sel ({sel}),", f"    .ext_axi_clk (p{n}_axi_clk),", f"    .ext_axi_rst_n (p{n}_axi_rst_n),",
            f"    .ext_rx_axis_tvalid (p{n}_rx_tvalid),", f"    .ext_rx_axis_tlast (p{n}_rx_tlast),",
            f"    .ext_tx_axis_tvalid (p{n}_tx_tvalid),", f"    .ext_tx_axis_tlast (p{n}_tx_tlast),", f"    .ext_tx_axis_tready (p{n}_tx_tready),"]
     ext += [f"    .ext_rx_axis_tdata{i} (p{n}_rx_tdata{i})," for i in W] + [f"    .ext_rx_axis_tkeep_user{i} (p{n}_rx_tkeep_user{i})," for i in W]
