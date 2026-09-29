@@ -140,10 +140,9 @@ detects its own drops by comparing its logs on the two sides.) The
 interlock's own emissions are limited to: sanitized forwarded frames,
 certificates, and **sync packets**. Sync packets (one per tick, reserved
 `ID = 1`) are each direction's time reference, and each is routed back
-toward **that direction's own sender**: the frontend's sync carries the
-arrival phase (`FIRST_ARR`) of the frontend's *own* traffic, and the compute
-node's sync flows inward — so neither stream can carry compute-influenced
-information outward. The certificate is exactly prover-predictable
+toward **that direction's own sender**: the frontend's sync carries information
+of the frontend's *own* traffic, and the compute node's sync flows inward — so neither stream can
+carry compute-influenced information outward. The certificate is exactly prover-predictable
 field-for-field, so the device's total covert-output surface reduces to
 nonce-latch timing (≤1 bit per nonce update) plus the HMAC tag bits
 (auditable by slot-bound cut-and-choose, see `verification-protocol.md`).
@@ -320,8 +319,7 @@ Division of labor around the device:
 - **Prover frontend:** the untrusted convenience replica. It logs both
   directions' packets, key material, and every certificate for the
   challenge window (~30 days); tracks the device's bucket clock from the
-  per-tick **sync packets** (the `FIRST_ARR` field tells it how deep into a
-  bucket its probe actually landed — feedback it iterates on to widen its
+  per-tick **sync packets** (feedback it iterates on to widen its
   send window; at most one sync in flight), so it can declare buckets that
   exact-match; byte-audits each certificate on arrival; and serves
   challenge openings.
@@ -404,7 +402,7 @@ the limit) the device's ability to certify at all.
   otherwise.
 - **Honest drops are avoidable and non-fatal.** Exact-match buckets drop
   boundary-straddling declarations; the honest frontend avoids this by
-  calibrating against the sync packets' `FIRST_ARR` feedback and not
+  calibrating against the sync packets' feedback and not
   sending within a guard window of the tick. A drop that happens anyway
   loses one packet's traffic; it never corrupts a certificate. Recovery is
   the endpoints' job via a new request.

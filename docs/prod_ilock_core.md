@@ -44,7 +44,7 @@ The core sits between two CoreTSE MAC client interfaces on a single fabric clock
 The endpoints' side of the contract:
 
 - speak **canonical packets**, one per Ethernet frame (a packet must fit the frame's DATA field);
-- stamp each packet with the **current bucket**, tracked from the sync packets arriving on the sender's own ingress wire (`FIRST_ARR` calibration — see the canon doc);
+- stamp each packet with the **current bucket**, tracked from the sync packets arriving on the sender's own ingress wire (see the canon doc);
 - keep **IDs monotonic** (per session inbound, per bucket outbound — the prover pre-sorts);
 - inject the verifier's **nonce** as the reserved `ID = 0` control packet on the request path;
 - leave room for the spliced-in streams — **certificates** on the response egress, **sync packets** on both — by reserving their bandwidth on the fill side (see below);

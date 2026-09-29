@@ -69,7 +69,7 @@ bench-agnostic.
 
 | Script | Runs on | Purpose |
 |---|---|---|
-| `calib_probe.py` | host | Bucket-edge calibration probe: flywheel PLL + FIRST_ARR servo against the live sync stream; reports landing-error stats (mean/std/p99) per intended in-bucket offset. |
+| `calib_probe.py` | host | Bucket-edge calibration probe: flywheel PLL + FIRST_DELTA servo against the live sync stream; reports landing-error stats (mean/std/p99) per intended in-bucket offset. |
 | `burst_test.py` | host | Full-bandwidth bucket burst test: fills each bucket with paced canonical frames, counts acceptance from the far NIC's rx delta. Flags: `--tuned` (RT prio + pinning), `--req` (globally-monotonic ids for the REQ direction), `--pace F`, `--offset US`, `--center`. |
 
 Operational notes (measured 2026-08-11, prod@1ms): send as **early** in the

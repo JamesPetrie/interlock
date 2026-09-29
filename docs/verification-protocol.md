@@ -161,27 +161,24 @@ The verifier-supplied nonce, 128 bits.
 ```
          32 bit     32 bit          64 bit
       +----------+----------+---------------------+
-      | FIRST_ARR|  BUCKET  |        ID = 1       |
+      | RESERVED |  BUCKET  |        ID = 1       |
       +----------+----------+---------------------+
+      |       FIRST_ID      |      FIRST_DELTA    |
+      +---------------------+---------------------+
       |                                           |
-      +-                                         -+
-      |                  RESERVED                 |
-      +-                                         -+
+      +-                 RESERVED                -+
       |                                           |
       +-------------------------------------------+
 ```
 
-**FIRST_ARR** \
-Interlock timer value (fabric-clock cycles since the bucket started) at which the closed bucket's first header-accepted packet arrived; all-ones if none. A packet later dropped for its payload still counts as accepted.
-
-```
-TODO: move FIRST_ARR into the reserved area and set the first word to 0,
-so the sync packet is a well-formed header-only packet under the generic
-length rule.
-```
-
 **BUCKET** \
 The bucket the sync feeds back on.
+
+**FIRST_ID** \
+The ID of the first accepted packet in the bucket; ZERO if none. The reported packet may later be dropped for its payload.
+
+**FIRST_DELTA** \
+Interlock timer value (fabric-clock cycles since the bucket started) of the first accepted header in the bucket; all-ONES if none. The reported packet may later be dropped for its payload.
 
 ### Certificate packet 224 bytes
 

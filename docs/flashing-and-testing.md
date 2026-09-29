@@ -157,7 +157,7 @@ VM. Pick the tests that match what the current bitstream implements:
 | **Spaced per-packet cert** | `bench/cert_spaced_test.sh [count] [gap_ms]` | cert frames with the version+id markers, count ≈ packets fed |
 | **Tick beacon** | `bench/canon_beacontest.sh [seconds]` | beacon frames (`ilbcn-v1`, DST `02:..:CB`) with a monotonically increasing bucket |
 | **Bucket accept/drop** | `bench/bucket_silicon_test.sh [p0_iface] [send_iface]` | beacon-driven bucket accept/drop on the combined build |
-| **Bucket-edge calibration** | `bench/calib_probe.py <iface> <buckets> <util> [--tuned]` | 0% miss with landing-error std in the tens of µs (flywheel PLL + FIRST_ARR servo; see `bench/README.md` for tuning notes) |
+| **Bucket-edge calibration** | `bench/calib_probe.py <iface> <buckets> <util> [--tuned]` | 0% miss with landing-error std in the tens of µs (flywheel PLL + FIRST_DELTA servo; see `bench/README.md` for tuning notes) |
 | **Full-bandwidth burst** | `bench/burst_test.py <send> <far> <secs> [util] [flags]` | acceptance ≈ offered up to the NIC's clean-throughput ceiling; per-flag guidance in `bench/README.md` |
 
 Example:

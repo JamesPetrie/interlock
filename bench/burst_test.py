@@ -6,13 +6,13 @@ the NIC queue shallow so wire time tracks send time. Acceptance is counted
 from the far NIC's rx_packets delta (the interlock forwards only accepted
 frames), corrected for the sync/cert streams.
 
-Phase tracking: flywheel + FIRST_ARR servo (see calib_probe.py), plus an
+Phase tracking: flywheel + FIRST_DELTA servo (see calib_probe.py), plus an
 integer-bucket BOOTSTRAP: sync frames reach userspace ~2 ms after the actual
 tick (measured; r8127 delivery latency), so the arrival-anchored model can lag
 by multiple buckets when buckets are small. The bootstrap cycles a declared-
 bucket offset delta over successive probe buckets and locks the delta whose
-probes get accepted (FIRST_ARR set on the sync closing the declared bucket).
-The FIRST_ARR servo then trims the fractional part, with an asymmetric gate:
+probes get accepted (FIRST_DELTA set on the sync closing the declared bucket).
+The FIRST_DELTA servo then trims the fractional part, with an asymmetric gate:
 a dropped first frame only ever shifts the observed error UP (next frame in
 the pace grid), so updates more than 300 us above the tracked center are
 rejected while the downward path stays open.
@@ -73,7 +73,7 @@ next_id = int(time.time() * 1e6) * 2
 FCLK_HZ    = 80_000_000
 SYNC_ID    = 1
 HDR_BYTES  = 64
-NOARR      = 0xFFFFFFFF
+NOARR      = 0xFFFFFFFFFFFFFFFF
 PLD_LEN    = 1436                     # DATA = 64 hdr + 1436 = 1500 (max canonical)
 FRAME_LEN  = 14 + HDR_BYTES + PLD_LEN # 1514 on-wire (sans FCS)
 WIRE_NS    = (FRAME_LEN + 24) * 8     # +preamble/FCS/IFG -> ns per frame at 1G
@@ -115,10 +115,11 @@ def parse_sync(fr):
     if len(fr) < 14 + HDR_BYTES or fr[12:14] != struct.pack("!H", HDR_BYTES):
         return None
     p = fr[14:14 + HDR_BYTES]
-    first_arr, bucket = struct.unpack("!II", p[0:8])
-    if int.from_bytes(p[8:16], "big") != SYNC_ID:
+    # RESERVED | BUCKET | ID | FIRST_ID | FIRST_DELTA (verification-protocol.md)
+    bucket, ident, _first_id, first_delta = struct.unpack("!4xIQQQ", p[0:32])
+    if ident != SYNC_ID:
         return None
-    return bucket, first_arr
+    return bucket, first_delta
 
 def rd_stat(iface, name):
     with open("/sys/class/net/%s/statistics/%s" % (iface, name)) as f:
@@ -184,8 +185,8 @@ DECL_SHIFT = None                 # integer-bucket offset, from bootstrap
 servo_on = False
 sent = buckets_filled = servo_hits = servo_rej = 0
 errs = []
-# Edge-fit estimator: each accepted FIRST_ARR yields one exact observation of
-# a true bucket edge in host time (send_t0 - first_arr*12.5ns). A rolling
+# Edge-fit estimator: each accepted FIRST_DELTA yields one exact observation of
+# a true bucket edge in host time (send_t0 - first_delta*12.5ns). A rolling
 # least-squares line over these gives phase+rate directly (~10 us noise) and,
 # unlike incremental feedback, is immune to the ~2-bucket feedback delay.
 sent_log = {}                     # declared bucket -> host t of its first frame
@@ -235,8 +236,8 @@ def clamp(v, lim):
 boot_pending = {}                 # declared_bucket -> delta
 boot_hits = {}
 
-def on_sync(closed, first_arr, t):
-    """Shared flywheel bookkeeping + FIRST_ARR servo. Returns True on new tick."""
+def on_sync(closed, first_delta, t):
+    """Shared flywheel bookkeeping + FIRST_DELTA servo. Returns True on new tick."""
     global cur_bkt, last_edge_ns, period_ns
     global servo_hits, servo_rej, DECL_SHIFT, servo_on
     nt = closed + 1 - cur_bkt
@@ -248,7 +249,7 @@ def on_sync(closed, first_arr, t):
     if abs(resid) < RESID_SANE_NS:
         last_edge_ns += K_EDGE * resid
     if DECL_SHIFT is None:
-        if closed in boot_pending and first_arr != NOARR:
+        if closed in boot_pending and first_delta != NOARR:
             d = boot_pending.pop(closed)
             boot_hits[d] = boot_hits.get(d, 0) + 1
             if boot_hits[d] >= 4:
@@ -257,16 +258,16 @@ def on_sync(closed, first_arr, t):
         for k in [k for k in boot_pending if k < cur_bkt - 1]:
             boot_pending.pop(k)
         return True
-    if servo_on and first_arr != NOARR and closed in sent_log:
+    if servo_on and first_delta != NOARR and closed in sent_log:
         t0 = sent_log.pop(closed)
-        eo = t0 - first_arr * 1e9 / FCLK_HZ
+        eo = t0 - first_delta * 1e9 / FCLK_HZ
         if fit is None or abs(eo - edge_of(closed)) < 300_000:
             edge_obs.append((closed, eo))
             if len(edge_obs) > 32:
                 edge_obs.pop(0)
             if fit is None or servo_hits % 4 == 0:
                 refit()
-            errs.append((first_arr - intended_timer) / FCLK_HZ * 1e6)
+            errs.append((first_delta - intended_timer) / FCLK_HZ * 1e6)
             servo_hits += 1
         else:
             servo_rej += 1
@@ -320,7 +321,7 @@ while DECL_SHIFT is None:
     boot_i += 1
     park_until(edge_of(cur_bkt) + 1.02 * period_ns) # into next bucket, then loop
 
-# --- settle: single frames at mid-bucket until the FIRST_ARR servo has
+# --- settle: single frames at mid-bucket until the FIRST_DELTA servo has
 # pulled the model phase to us-scale; only then is a guard_lo target safe ----
 servo_on = True
 

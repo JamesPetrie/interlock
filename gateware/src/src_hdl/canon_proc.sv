@@ -271,10 +271,10 @@ module canon_proc
     else if (insert_swap)  swap <= 1'b0;
   end
 
-  // first accepted-packet arrival of the current bucket (canon_len_t: the
-  // sync packet reports it in the pld_len field)
+  // first accepted-packet arrival of the current bucket
   logic       first_seen;
-  canon_len_t first_arr;
+  canon_id_t  first_id;
+  canon_len_t first_delta;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -342,8 +342,9 @@ module canon_proc
             if (hdr_rdy) begin
               if (hdr_chk) begin
                 if (!first_seen) begin
-                  first_seen <= 1'b1;
-                  first_arr  <= timer;
+                  first_seen   <= 1'b1;
+                  first_id     <= hdr_id;
+                  first_delta  <= timer;
                 end
                 // capture header fields for payload and sequence checks
                 cur_id     <= hdr_id;
@@ -391,33 +392,35 @@ module canon_proc
   // Sync packet emission — one per tick
   // ------------------------------------------------------------------
 
-  // using rsp_hdr for the ctrl packet type (field-wise assigns — Icarus has
+  // using req_hdr for the ctrl packet type (field-wise assigns — Icarus has
   // no assignment patterns)
-  wire canon_rsp_hdr_t sync_hdr;
+  wire canon_req_hdr_t sync_hdr;
 
-  assign sync_hdr.pld_len     = first_seen ? first_arr : {CANON_PLD_LEN_W{1'b1}};
+  assign sync_hdr.pld_len     = '0;
   assign sync_hdr.bucket      = curr_bkt;
   assign sync_hdr.id          = CANON_SYNC_ID;
-  assign sync_hdr.reserved0   = '0;
+  assign sync_hdr.reference   = first_seen ? first_id         : '0;
+  assign sync_hdr.reserved0   = first_seen ? 64'(first_delta) : '1;
+  assign sync_hdr.key_commit  = '0; // not used in sync packets
 
 
-  // RSP_HDR_BYTES re-export: a package localparam used directly for
+  // REQ_HDR_BYTES re-export: a package localparam used directly for
   // in_bytes self-determines to 1 bit in Icarus, silently passing 0
-  localparam int unsigned RSP_HDR_BYTES = CANON_RSP_HDR_BYTES;
-  localparam int unsigned SY_IB_W       = $clog2(RSP_HDR_BYTES+1);
+  localparam int unsigned REQ_HDR_BYTES = CANON_REQ_HDR_BYTES;
+  localparam int unsigned SY_IB_W       = $clog2(REQ_HDR_BYTES+1);
 
-  wire [SY_IB_W-1:0] sy_ib = RSP_HDR_BYTES;
+  wire [SY_IB_W-1:0] sy_ib = REQ_HDR_BYTES;
 
   wire        sy_ov, sy_last;
   wire [31:0] sy_od;
 
   // The serializer latches the header at the tick and streams it out.
-  serializer #(.MAX_BYTES(RSP_HDR_BYTES)) u_ser_sync (
+  serializer #(.MAX_BYTES(REQ_HDR_BYTES)) u_ser_sync (
     .clk (clk), .rst_n (rst_n),
     .in_valid (tick), .in_ready (), // no backpressure by design
     // struct order, not to_wire_bits: the serializer consumes byte 0 from
     // the MSBs and emits it on the wire first
-    .in_data (canon_rsp_hdr_bits_t'(sync_hdr)),
+    .in_data (canon_req_hdr_bits_t'(sync_hdr)),
     .in_bytes (sy_ib), .in_last (1'b1),
     .out_valid (sy_ov), .out_data (sy_od), .out_ready (tready_sync),
     .out_bytes (/* word-aligned: tkeep constant */), .out_last (sy_last)
@@ -427,6 +430,6 @@ module canon_proc
   assign tdata_sync  = sy_od;
   assign tkeep_sync  = 4'b1111;    // 64-byte packet is word-aligned
   assign tlast_sync  = sy_last;
-  assign tuser_sync  = 16'(CANON_RSP_HDR_BYTES);
+  assign tuser_sync  = 16'(CANON_REQ_HDR_BYTES);
 
 endmodule

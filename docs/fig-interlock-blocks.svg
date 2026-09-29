@@ -143,7 +143,8 @@
 
   <!-- ============ sync packets ============ -->
   <path d="M 515 154 L 515 175 L 335 175 L 335 635 L 510 635 L 510 650" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
-  <text x="343" y="168" font-size="10" fill="#444">sync (id = 1, every tick, FIRST_ARR) → own sender</text>
+  <text x="343" y="168" font-size="10" fill="#444">sync (id = 1, every tick) → own sender</text>
+  <text x="343" y="189" font-size="10" fill="#444">FIRST_ID, FIRST_DELTA</text>
 
   <path d="M 1050 650 L 1050 154" fill="none" stroke="#333" stroke-width="1.6" marker-end="url(#arr)"/>
   <text x="1058" y="404" font-size="10" fill="#444">sync → compute</text>

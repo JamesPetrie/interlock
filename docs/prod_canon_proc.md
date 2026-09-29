@@ -56,7 +56,7 @@ The `BUCKET` match check only admits packets stamped with the interlock's curren
 
 The packet format is defined in `verification-protocol.md` (*Control packets*).
 
-`FIRST_ARR` is the calibration feedback. The sender first observes only the tick cadence and aims a single probe at the middle of a bucket; the closing sync packet tells it how deep into the bucket the probe actually landed, and it widens the window it targets around that estimate — feedback again, widen again — iterating out to the usable range. One field suffices: a sender that fills its window at line rate knows where its last byte lands relative to its first.
+`FIRST_DELTA` is the calibration feedback; `FIRST_ID` identifies the packet it timed. The sender first observes only the tick cadence and aims a single probe at the middle of a bucket; the closing sync packet tells it how deep into the bucket the probe actually landed, and it widens the window it targets around that estimate — feedback again, widen again — iterating out to the usable range. One timing field suffices: a sender that fills its window at line rate knows where its last byte lands relative to its first.
 
 "Accepted" means the packet passed the header checks — the same instant its bucket membership is decided. A packet that later raises the payload drop flag still counts. The tracking re-arms when the bucket-boundary marker is emitted.
 

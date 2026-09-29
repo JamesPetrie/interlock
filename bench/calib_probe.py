@@ -2,7 +2,7 @@
 
 Plays the role the prod_canon_proc doc assigns the sender: lock to the tick
 cadence from sync packets (ID=1), aim probes at a chosen intra-bucket offset,
-and use the FIRST_ARR feedback (FPGA 80 MHz timer at ingest, 12.5 ns units) to
+and use the FIRST_DELTA feedback (FPGA 80 MHz timer at ingest, 12.5 ns units) to
 close the loop and measure landing error. One probe per bucket, RSP format,
 sent on the server-facing NIC; the response-direction sync arrives on the same
 NIC.
@@ -21,10 +21,10 @@ NBKT  = int(sys.argv[2])
 FRAC  = float(sys.argv[3]) if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else 0.5
 TUNED = "--tuned" in sys.argv
 
-FCLK_HZ   = 80_000_000           # fabric clock: FIRST_ARR/timer units
+FCLK_HZ   = 80_000_000           # fabric clock: FIRST_DELTA/timer units
 SYNC_ID   = 1
 HDR_BYTES = 64
-NOARR     = 0xFFFFFFFF           # first_arr when bucket saw no accepted packet
+NOARR     = 0xFFFFFFFFFFFFFFFF   # FIRST_DELTA when bucket saw no accepted packet
 
 if TUNED:
     try:
@@ -50,15 +50,16 @@ def parse_sync(fr):
     if len(fr) < 14 + HDR_BYTES or fr[12:14] != struct.pack("!H", HDR_BYTES):
         return None
     p = fr[14:14 + HDR_BYTES]
-    first_arr, bucket = struct.unpack("!II", p[0:8])
-    if int.from_bytes(p[8:16], "big") != SYNC_ID:
+    # RESERVED | BUCKET | ID | FIRST_ID | FIRST_DELTA (verification-protocol.md)
+    bucket, ident, _first_id, first_delta = struct.unpack("!4xIQQQ", p[0:32])
+    if ident != SYNC_ID:
         return None
-    return bucket, first_arr
+    return bucket, first_delta
 
 # --- initial lock: least-squares fit of edge time vs bucket ---------------
 # Sync ARRIVAL times are noisy (r8127 interrupt moderation, no ethtool -C
 # support), so they are used only for the initial fit and bucket numbering;
-# steady-state phase/rate come from FIRST_ARR (FPGA-clock-measured, immune to
+# steady-state phase/rate come from FIRST_DELTA (FPGA-clock-measured, immune to
 # the return path) via a PI servo.
 rx.settimeout(1.0)
 obs = []                          # (bucket_closed, host_ns)
@@ -91,7 +92,7 @@ print("# locked: bucket=%d period=%.4f ms -> TIMER_END~%d, intended offset %.2f 
 
 # Flywheel model: last_edge advances by exactly one period per tick (bucket
 # numbering from the sync stream is exact even when arrival times are not).
-# Sync arrival residuals couple in weakly and only when sane; FIRST_ARR errors
+# Sync arrival residuals couple in weakly and only when sane; FIRST_DELTA errors
 # trim phase (corr) and rate (period) with clamped gains and outlier rejection.
 KP, K_EDGE = 0.4, 0.05
 CORR_STEP_MAX_NS  = 1_000_000     # phase step clamp: 1 ms
@@ -142,7 +143,7 @@ while len(results) < NBKT:
     s = parse_sync(fr)
     if not s:
         continue
-    closed, first_arr = s
+    closed, first_delta = s
     nt = closed + 1 - cur_bkt
     if nt <= 0:
         continue
@@ -160,8 +161,8 @@ while len(results) < NBKT:
             print("# hard re-anchor to sync arrivals")
     if closed in pending:
         intended = pending.pop(closed)
-        hit = first_arr != NOARR
-        err_us = (first_arr - intended) / FCLK_HZ * 1e6 if hit else None
+        hit = first_delta != NOARR
+        err_us = (first_delta - intended) / FCLK_HZ * 1e6 if hit else None
         if hit and abs(err_us) < ERR_SANE_US:
             # landed late -> positive err -> send earlier; persistent bias = rate
             corr_ns += clamp(KP * err_us * 1000.0, CORR_STEP_MAX_NS)
