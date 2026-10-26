@@ -44,7 +44,7 @@ The core sits between two CoreTSE MAC client interfaces on a single fabric clock
 The endpoints' side of the contract:
 
 - speak **canonical packets**, one per Ethernet frame (a packet must fit the frame's DATA field);
-- stamp each packet with the **current bucket**, tracked from the sync packets arriving on the sender's own ingress wire (`FIRST_ARR` calibration — see the canon doc);
+- stamp each packet with the **current bucket**, tracked from the sync packets arriving on the sender's own ingress wire (see the canon doc);
 - keep **IDs monotonic** (per session inbound, per bucket outbound — the prover pre-sorts);
 - inject the verifier's **nonce** as the reserved `ID = 0` control packet on the request path;
 - leave room for the spliced-in streams — **certificates** on the response egress, **sync packets** on both — by reserving their bandwidth on the fill side (see below);
@@ -57,7 +57,7 @@ The dashed boundary in the diagram is the organizing decision: the **bucket buff
 The asymmetry cascades into the drop handling:
 
 - **Request side** — `canon → gate → commit → buffer`. The commitment precedes the buffer, and it commits exactly what it forwards, so a payload-flagged packet must be squashed *before* it: that is the sole purpose of the separate `axis_pkt_gate`, which consumes canon's drop flag.
-- **Response side** — `canon → buffer → commit`. No gate: the buffer's commit/abandon consumes the drop flag natively, and the commitment then sees only verified drained records — including the effect of any drain preemption, so the digest matches what actually left toward the wire.
+- **Response side** — `canon → buffer → commit`. No gate: the buffer's commit/abandon consumes the drop flag natively, and the commitment then sees only verified drained records, so the digest matches what actually left toward the wire.
 
 ## Inline Bucket marker flow and tuser
 

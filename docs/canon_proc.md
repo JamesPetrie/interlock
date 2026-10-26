@@ -54,9 +54,9 @@ Note: the packet itself always fails `ID` validity (a reserved ID) and is **supp
 
 The `BUCKET` match check only admits packets stamped with the interlock's current bucket, so the sender must track the interlock's bucket clock. Each `canon_proc` therefore emits a **sync packet** on a dedicated AXIS master at every tick, to be routed back toward its direction's sender.
 
-The packet is a header-only **response-format header** (64 bytes) carrying the reserved control `ID = 1`. Wire layout, fields big-endian: `first_arr[4]` ‖ `bucket[4]` ‖ `id[8] = 1` ‖ `zeros[48]` — the packet is header-only, so the `PLD_LEN` position is reused to carry `FIRST_ARR`. `BUCKET` is the index of the bucket the tick **closes**; `FIRST_ARR` is the `timer` value at which that bucket's **first packet was accepted**, all-ones when the bucket saw none.
+The packet format is defined in `verification-protocol.md` (*Control packets*).
 
-`FIRST_ARR` is the calibration feedback. The sender first observes only the tick cadence and aims a single probe at the middle of a bucket; the closing sync packet tells it how deep into the bucket the probe actually landed, and it widens the window it targets around that estimate — feedback again, widen again — iterating out to the usable range. One field suffices: a sender that fills its window at line rate knows where its last byte lands relative to its first.
+`FIRST_DELTA` is the calibration feedback; `FIRST_ID` identifies the packet it timed. The sender first observes only the tick cadence and aims a single probe at the middle of a bucket; the closing sync packet tells it how deep into the bucket the probe actually landed, and it widens the window it targets around that estimate — feedback again, widen again — iterating out to the usable range. One timing field suffices: a sender that fills its window at line rate knows where its last byte lands relative to its first.
 
 "Accepted" means the packet passed the header checks — the same instant its bucket membership is decided. A packet that later raises the payload drop flag still counts. The tracking re-arms when the bucket-boundary marker is emitted.
 

@@ -159,16 +159,40 @@ ss -tlnp | grep 1702
 # Expected: a row showing port 1702 owned by lmgrd / actlmgrd / saltd / snpslmd
 ```
 
-**Note: lmgrd is not under systemd by default.** It won't survive a
-reboot of the VM. If your VM reboots, re-run the `lmgrd ...` command
-above. (You can write a systemd unit to make this automatic — left as an
-exercise; templates are easy to find.)
+**Note: lmgrd started this way won't survive a reboot**, and this has
+actually bitten: after an unnoticed VM reboot, `./build.sh` fails within
+seconds with `Cannot locate license file` (see gotchas, §10). Put it
+under systemd so it comes back on its own:
+
+```bash
+cat > /etc/systemd/system/lmgrd.service <<'EOF'
+[Unit]
+Description=FlexLM license daemon for Libero SoC
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/microchip/Libero_SoC_v2024.2/Libero/bin64/lmgrd \
+    -c /opt/microchip/licenses/License.dat \
+    -l /var/log/lmgrd.log
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now lmgrd.service
+systemctl status lmgrd.service --no-pager   # should show active, port 1702 listening
+```
+
+(If you started a bare `lmgrd` earlier in this section, kill it first —
+`pkill lmgrd` — or the systemd instance will fail to bind port 1702.)
 
 ### Test license checkout
 
 ```bash
 # Should print version info + license info without errors
-/usr/local/microchip/Libero_SoC_2024.2/Libero/bin64/lmutil lmstat -a -c 1702@localhost
+/usr/local/microchip/Libero_SoC_v2024.2/Libero/bin64/lmutil lmstat -a -c 1702@localhost
 ```
 
 ## 5. Post-install fixes for headless Ubuntu 24.04
@@ -328,6 +352,20 @@ The `.job` file lands in
 `gateware/Libero_Project/designer/top/export/top.job`, ~12 MB.
 `./build.sh` prints its SHA-256 at the end.
 
+### Which design did I just build?
+
+`main` currently builds the **recomp** top (`recomp_ilock_core`, since
+commit `66a7c3c`) with a **100 ms testing-override bucket period**
+(commit `a3376e3`). On a recomp build, sync + cert traffic appears on
+**port 0 only** and only the 0→1 direction is processed — **a silent
+port 1 is expected, not a broken setup.**
+
+The production top (bidirectional `fabric_bridge` wiring, sync both
+ways) at the real 1 ms bucket period is branch **`build/prod-1ms`**
+(validated on silicon 2026-07-20). Build-time selection knobs
+(`TOP={recomp,prod}`, `BUCKET_MS={100,1}`) exist on
+`feature/build-config-knobs`, not yet merged.
+
 ### Tests (separate from synthesis)
 
 ```bash
@@ -364,6 +402,11 @@ find /usr/local/microchip/Libero_SoC_v2024.2 -name 'libstdc++.so.6' -not -name '
 Rename each to `.disabled`.
 
 ### lmgrd not running after reboot
+
+**Symptom:** `./build.sh` fails within seconds and the log ends with
+`Cannot locate license file` (or `lmutil lmstat` can't reach
+`1702@localhost`). Almost always means the VM rebooted and lmgrd wasn't
+under systemd (§4 has the unit file). One-off restart:
 
 ```bash
 ss -tlnp | grep 1702 || \

@@ -65,6 +65,23 @@ bench-agnostic.
 | `canon_beacontest.sh` | `canon_beacon_parse.py` | Tick beacon (`ilbcn-v1`, DST `02:..:CB`), monotonic bucket. |
 | `bucket_silicon_test.sh` | `bucket_silicon_test.py` | Beacon-driven bucket accept/drop on the combined build. |
 
+### Bucket-timing / throughput harnesses (added 2026-08)
+
+| Script | Runs on | Purpose |
+|---|---|---|
+| `calib_probe.py` | host | Bucket-edge calibration probe: flywheel PLL + FIRST_DELTA servo against the live sync stream; reports landing-error stats (mean/std/p99) per intended in-bucket offset. |
+| `burst_test.py` | host | Full-bandwidth bucket burst test: fills each bucket with paced canonical frames, counts acceptance from the far NIC's rx delta. Flags: `--tuned` (RT prio + pinning), `--req` (globally-monotonic ids for the REQ direction), `--pace F`, `--offset US`, `--center`. |
+
+Operational notes (measured 2026-08-11, prod@1ms): send as **early** in the
+bucket as possible — the hardware has no guard window, and margin is
+`period − start_offset − burst_length` against one-sided-late host TX jitter.
+In bidirectional runs give each sender its **own core**
+(`docker --cpuset-cpus=…` + `chrt`) instead of `--tuned` on both, or the two
+RT processes share one core and the REQ side looks like a device regression.
+Use `--pace 1.0` for the PCIe NIC but default pacing for the USB NIC. The
+settle stage is known-flaky (~40% `FAIL: settle never converged`) — just
+re-run.
+
 ### UART
 
 | Script | Runs on | Purpose |
@@ -77,3 +94,8 @@ Flash chain verified end-to-end 2026-06-15; full interlock (forwarding + two
 cert cores + cert egress) verified on silicon 2026-06-16. The wire constants baked
 into the cert/beacon scripts track the bitstream that was live then — update the
 relevant script if the gateware's cert/beacon format changes.
+
+The timing harnesses (`calib_probe.py`, `burst_test.py`) were verified against
+the prod@1ms build (flashed 2026-07-20) during the 2026-07-20 / 2026-08-11
+calibration and throughput campaigns; this directory holds the copies synced
+from the bench (`~/fpe/`) on 2026-08-13.

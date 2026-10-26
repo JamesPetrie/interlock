@@ -1,5 +1,10 @@
 # Fast firmware iteration via JTAG-load to TCM
 
+```
+TODO (James): Claude reviewed this doc (2026-09-18). The JTAG-load workflow it
+describes is recorded as not working; update it or retire it.
+```
+
 This guide is for iterating on the Mi-V firmware (the soft RISC-V CPU
 that initializes CoreTSE / VSC8575 on the MPF300-EVAL-KIT) without
 having to rebuild and reflash the FPGA bitstream for every change.

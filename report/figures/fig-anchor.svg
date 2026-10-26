@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="190" viewBox="0 0 1000 190" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><polygon points="0 0, 9 3.5, 0 7" fill="#333"/></marker></defs>
+<rect width="1000" height="190" fill="#ffffff"/>
+<rect x="150" y="40" width="110" height="44" rx="7" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/>
+<text x="205.0" y="67.0" font-size="12.5" text-anchor="middle" fill="#1e4f8f" font-weight="bold">cert n−2</text>
+<rect x="330" y="40" width="110" height="44" rx="7" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/>
+<text x="385.0" y="67.0" font-size="12.5" text-anchor="middle" fill="#1e4f8f" font-weight="bold">cert n−1</text>
+<rect x="510" y="40" width="110" height="44" rx="7" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="3.5"/>
+<text x="565.0" y="59" font-size="12.5" text-anchor="middle" fill="#1e4f8f" font-weight="bold">cert n</text>
+<text x="565.0" y="75" font-size="11" text-anchor="middle" fill="#1e4f8f">nonce</text>
+<rect x="690" y="40" width="110" height="44" rx="7" fill="#d6e6f7" stroke="#2f6cbf" stroke-width="2"/>
+<text x="745.0" y="67.0" font-size="12.5" text-anchor="middle" fill="#1e4f8f" font-weight="bold">cert n+1</text>
+<text x="105" y="68.0" font-size="18" text-anchor="middle" fill="#777">…</text>
+<text x="845" y="68.0" font-size="18" text-anchor="middle" fill="#777">…</text>
+<text x="565.0" y="28" font-size="12" text-anchor="middle" fill="#1e4f8f" font-weight="bold">anchor</text>
+<rect x="490.0" y="130" width="150" height="40" rx="8" fill="#ffffff" stroke="#2f6cbf" stroke-width="2"/><text x="565.0" y="155" font-size="13" text-anchor="middle" fill="#1e4f8f" font-weight="bold">Verifier</text>
+<line x1="565.0" y1="130" x2="565.0" y2="88" stroke="#333" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="575.0" y="112" font-size="11.5" text-anchor="start" fill="#444">nonce</text>
+<text x="960" y="67.0" font-size="11.5" text-anchor="end" fill="#777">time →</text>
+</svg>
