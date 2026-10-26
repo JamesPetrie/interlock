@@ -33,7 +33,7 @@ The challenged response's header however, gets sanitized to be identifiable and 
 2. Upon receiving the token_0 estimates, the block enters a loop, revealing the actual token for each estimate received.
 3. The loop ends when the end of the payload is reached and the estimate for token_N arrives (no point revealing token_N since there's no token_N+1 to predict)
 
-No end-of-context marker is sent toward the enclosure: the last context packet's `ID` matches the challenged response's, so the context is self-terminating.
+No end-of-context marker is sent toward the enclosure: the last context packet is the challenged response's request, whose position the sanitized header carries as `REFERENCE`, so the context is self-terminating.
 
 Note: The final estimate is scored even if the packet is full (a response potentially continued in a later packet). Recomputation always scores a single packet.
 
@@ -68,8 +68,7 @@ The reveal and estimate frame formats are owned by `verification-protocol.md` (*
 Forwarded **context** packets are not reframed by the feed — they pass
 through verbatim with only the beat-#0 length carried on `tuser`.
 
-The **challenged** packet is forwarded in place as a header-only packet: only `ID` survives, `PLD_LEN`, `RESERVED` are zeroed, and the payload is **stripped rather than masked** to avoid giving away information the prover needs to predict. Furthermore, `BUCKET` is also zeroed to make the challenged response packet uniqulely identifiable in the stream.
-
+The **challenged** packet is forwarded in place as a header-only packet: only `REFERENCE` survives, `PLD_LEN`, `RESERVED` are zeroed with all other header fields, and the payload is **stripped rather than masked** to avoid giving away information the prover needs to predict.
 ## Scoring
 
 There is a tradeoff between using raw probabilities p vs surprisals log(p) on the wire. Normalization checking is easier with probabilities while surprisals avoid rounding errors being introduced. As a trade-off, we use probability represented as a floating point number (parameterizable custom format) which is somewhere between. It allows normalization on a wide accumulator using a barrel shifter while directly expressing the mantissa for iterative logarithm approximation:

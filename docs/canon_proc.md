@@ -13,7 +13,7 @@ This document describes the **canonical packet processor** — the canonical lay
 
 The processor sees only the Ethernet DATA field, already de-framed (including the removal of PAD bytes).
 
-The `DIR` parameter fixes which canonical header this instance parses: the **request** header or the **response** header. The recomputation instance does not have it's on DIR value now, it uses `RECOMP` to disable the checks which are not needed there and to restrict admission to inference packets.
+The `DIR` parameter fixes which canonical header this instance parses — the **request** header or the **response** header — and is the `DIR` value the packets of that log carry on the wire. The recomputation instance does not have its own DIR value now; it uses `RECOMP` to disable the checks which are not needed there (it replays packets of both logs, so the `DIR` match is skipped too).
 
 ## Header capture — shift register
 
@@ -31,12 +31,14 @@ Where a failure is addressed depends on which check failing:
   - **Integrity checks** — always on; that the beats form a well-formed canonical packet:
     - **full-header** check: the packet is long enough to carry a complete header (guards against a fractional or spliced header window).
     - `PLD_LEN` range: payload fits the maximum canonical payload (`PLD_MAX = CANON_PKT_BYTES_MAX − HDR_BYTES`).
-    - `PLD_LEN` remainder: inference packets (ID LSB `inf` set) must carry a payload that is a multiple of `CANON_TOK_BYTES`.
+    - `PLD_LEN` remainder: the payload is a whole number of token units (a multiple of `CANON_TOK_BYTES`).
+    - `TYPE` is Traffic: control packets are never forwarded.
+    - `DIR` match: the header's direction matches the direction of the pipeline.
     - `BUCKET` match: the header's bucket equals the interlock's current bucket.
-    - `ID` validity: `ID != 0 && ID != 1` — IDs 0 and 1 are reserved (certificate and sync control packets). With `RECOMP` this also requires the `inf` bit, so the recomputation ingress admits inference packets only.
+    - `SLOT` capacity: `SLOT < CANON_NUM_SLOT`.
   - **Content checks** — skipped wholesale when `RECOMP` is set:
-    - `ID` monotonicity: `id_cont` strictly greater than `prev_id`, the last packet that fully passed (header **and** payload). On the RSP direction `prev_id` resets at each bucket boundary, so responses need only be ordered within a bucket (overtake support).
-    - `REFERENCE` (REQ only): `reference < id`.
+    - `SLOT` order: `SLOT >= next_slot`, one past the slot of the last packet that fully passed (header **and** payload). `next_slot` restarts at 0 at each bucket boundary.
+    - `REFERENCE`: not later than the packet — same `DIR`: `(BUCKET, SLOT)` not above the packet's own (a root packet references itself); other `DIR`: a strictly earlier `BUCKET`.
     - `RESERVED` value: the reserved field is all-zero.
 - a **payload-check failure** is only known at end-of-packet, so it is signalled as the **drop flag on `tuser` at `tlast`**, on either:
   - a length mismatch — received payload byte count != `PLD_LEN`; or
@@ -46,9 +48,9 @@ Dropped packets are simply dropped — not counted, not escalated; recovery, if 
 
 ## Nonce capture
 
-The reserved `ID = 0` transaction carries a **nonce** rather than a normal request, in its `KEY_COMMIT` field. That field lives only in the request header, so this requires `DIR = CANON_DIR_REQ` (the recomp ingress uses REQ for exactly this reason). The low `CANON_NONCE_W` bits of `KEY_COMMIT` are latched into the `nonce` register and driven continuously on the `nonce` output until the next nonce packet replaces it.
+A nonce packet carries the **nonce** in its `KEY_COMMIT` field. That field lives only in the request header, so this requires `DIR = CANON_DIR_REQ` (the recomp ingress uses REQ for exactly this reason). The low `CANON_NONCE_W` bits of `KEY_COMMIT` are latched into the `nonce` register and driven continuously on the `nonce` output until the next nonce packet replaces it.
 
-Note: the packet itself always fails `ID` validity (a reserved ID) and is **suppressed** on the output.
+Note: the packet itself always fails the `TYPE` check and is **suppressed** on the output.
 
 ## Timer synchronization — sync packets
 

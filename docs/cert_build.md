@@ -27,7 +27,7 @@ The packed-struct order in the RTL **is** the wire order, all fields big-endian.
 
 ## Frame flagging — reserved zero header
 
-On the wire the record rides as an opaque canonical packet behind a **reserved all-zero prefix** of `HDR_BYTES`. Real traffic never uses canonical `id = 0` (`canon_proc` reserves IDs 0/1 for control), so the receiver reads `id = 0` where the canonical header's `id` field sits and parses the remainder as a certificate. The prefix is *reserved padding*, not a populated header — no other field of it is interpreted.
+On the wire the record rides as an opaque canonical packet behind a **reserved all-zero prefix** of `HDR_BYTES`. An all-zero prefix reads as `TYPE = 0`, the certificate type, so the receiver reads `TYPE = 0` where the canonical header's `TYPE` field sits and parses the remainder as a certificate. The prefix is *reserved padding*, not a populated header — no other field of it is interpreted.
 
 ## Late link-up — dropped certificates (accepted limitation)
 

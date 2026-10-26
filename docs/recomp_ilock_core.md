@@ -39,7 +39,7 @@ Port 0 faces the **prover frontend**, port 1 the **recomputation enclosure**; fo
 The frontend's side of the contract:
 
 - stage the challenge slice as canonical packets — the **challenged response first**, then its context into a single bucket. That position is the whole of what identifies the challenged packet, so no other data packet may precede it;
-- carry the **challenge nonce** in a **NONCE marker** (a header-only `ID = 0` packet) and the **expected slice commitment** in an **EXP marker** (a header-only `ID = 1` packet), both in `KEY_COMMIT`. Both are **consumed, not forwarded** — the reserved IDs fail admission while their fields still latch — so they may sit anywhere inside or before the bucket, and neither enters the digest it arms;
+- carry the **challenge nonce** in a **NONCE marker** and the **expected slice commitment** in an **EXP marker**, both in `KEY_COMMIT`. Both are **consumed, not forwarded** — control packets fail admission while their fields still latch — so they may sit anywhere inside or before the bucket, and neither enters the digest it arms;
 - stamp the **current bucket** — sync packets arrive back on port 0 for calibration, and bucket integrity gates admission;
 - hold staging while a challenge runs: packets arriving mid-challenge are committed upstream but dropped whole by the feed, so a violation reads as lost packets in the digest, never as corrupted framing;
 

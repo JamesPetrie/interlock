@@ -7,28 +7,22 @@ package canon_pkg;
   // canon_pkg compiles before eth_pkg and synthesis fails.
   import eth_pkg::*;
 
-  // ---- pipeline direction ----
-  // Selects which canonical header type a datapath block parses: requests
-  // (client -> server) or responses (the reverse).
-  typedef enum logic {
-    CANON_DIR_REQ = 1'b0,
-    CANON_DIR_RSP = 1'b1
-    // TODO add DIR_RECOMP instead of reusing DIR_REQ
-  } canon_dir_t;
-
   // ---- format-level size bound ----
   // A canonical packet (header + payload) must fit a single Ethernet frame's
   // DATA field — no segmentation (see docs/ethernet-frame-sanitization.md).
   localparam int unsigned CANON_PKT_BYTES_MAX = eth_pkg::ETH_LEN_MAX;
 
   // ---- field widths ----
+  // Header word layout (docs/verification-protocol.md, *Packet formats*):
   localparam int unsigned CANON_PLD_LEN_W   =   32;
+  localparam int unsigned CANON_TYPE_W      =   32;
+  localparam int unsigned CANON_DIR_W       =   16;
   localparam int unsigned CANON_BKT_W       =   32;
-  localparam int unsigned CANON_ID_W        =   64;
+  localparam int unsigned CANON_SLOT_W      =   16;
   localparam int unsigned CANON_REQ_RSVD_W  =   64;
   localparam int unsigned CANON_KCOMMIT_W   =  256;
   localparam int unsigned CANON_NONCE_W     =  128;
-  localparam int unsigned CANON_RSP_RSVD_W  =  384;
+  localparam int unsigned CANON_RSP_RSVD_W  =  320;
 
 
   localparam int unsigned CANON_TOK_BYTES   =    2; // recomp_feed only supports TOK_BYTES <= 2 currently
@@ -37,28 +31,49 @@ package canon_pkg;
   // ---- scalar field types ----
   typedef logic [CANON_PLD_LEN_W-1:0]        canon_len_t;
   typedef logic [CANON_BKT_W-1:0]            canon_bkt_t;
+  typedef logic [CANON_SLOT_W-1:0]           canon_slot_t;
   typedef logic [CANON_KCOMMIT_W-1:0]        canon_kcommit_t;
+
+  localparam canon_slot_t CANON_NUM_SLOT  = canon_slot_t'(16'd64);
 
   typedef logic [8*CANON_TOK_BYTES - 1:0]    canon_tok_t;
 
-  // Request identifier
+  // ---- TYPE (low nibble of the word, upper bits zero) ----
+  typedef enum logic [CANON_TYPE_W-1:0] {
+    CANON_TYPE_CERT    = 32'h0, // certificate (all-zero header)
+    CANON_TYPE_NONCE   = 32'h1, // nonce (control, inbound)
+    CANON_TYPE_SYNC    = 32'h2, // sync (control, feedback)
+    CANON_TYPE_EXP     = 32'h3, // expected slice commitment (recomp ingress)
+    CANON_TYPE_TRAFFIC = 32'hF  // request or response, per DIR
+  } canon_type_t;
+
+  // ---- pipeline direction ----
+  // Selects which canonical header type a datapath block parses: requests
+  // (client -> server) or responses (the reverse).
+  typedef enum logic [CANON_DIR_W-1:0] {
+    CANON_DIR_REQ = 16'h0000,
+    CANON_DIR_RSP = 16'hFFFF
+    // TODO add DIR_RECOMP instead of reusing DIR_REQ
+  } canon_dir_t;
+
+  // ---- position ----
+  // ID = DIR ‖ BUCKET ‖ SLOT, the packet's position in its log. The headers
+  // carry the three fields directly; REFERENCE carries them as one value.
   typedef struct packed {
-    logic [CANON_ID_W-1-1:0] id_cont; // unique identifier bits continued
-    logic                    inf;     // LSB 1: inference packet, 0: other
-
+    canon_dir_t  dir;
+    canon_bkt_t  bucket;
+    canon_slot_t slot;
   } canon_id_t;
-
-  // Reserved IDs (concat in field order — Icarus has no assignment patterns):
-  localparam canon_id_t CANON_CERT_ID = canon_id_t'(0); // reserved for certificates
-  localparam canon_id_t CANON_SYNC_ID = canon_id_t'(1); // reserved for sync packets
 
   // =====================================================================
   // Request packet
   // =====================================================================
   typedef struct packed {
     canon_len_t              pld_len;      // total payload length in bytes (incl. encryption tag)
+    canon_type_t             pkt_type;     // TYPE: traffic or one of the control packets
+    canon_dir_t              dir;          // Direction of the packet
     canon_bkt_t              bucket;       // Index of the bucket the packet is targeting
-    canon_id_t               id;           // transaction ID
+    canon_slot_t             slot;         // Slot within the bucket
     canon_id_t               reference;    // Reference transaction used as context
     logic [CANON_REQ_RSVD_W-1:0] reserved0;
     canon_kcommit_t              key_commit;
@@ -114,8 +129,11 @@ package canon_pkg;
 
   typedef struct packed {
     canon_len_t                  pld_len;   // total payload length in bytes (incl. encryption tag)
+    canon_type_t                 pkt_type;  // TYPE: traffic or one of the control packets
+    canon_dir_t                  dir;       // Direction of the packet
     canon_bkt_t                  bucket;    // Index of the bucket the packet is targeting
-    canon_id_t                   id;        // matches the originating request
+    canon_slot_t                 slot;      // Slot within the bucket
+    canon_id_t                   reference; // Reference transaction used as context
     logic [CANON_RSP_RSVD_W-1:0] reserved0;
   } canon_rsp_hdr_t;
 

@@ -132,14 +132,14 @@ module recomp_feed
 
   // sanitize mask, built field-wise on the header struct (no hardcoded
   // field order or offsets) and serialized to wire byte order by the
-  // package: only ID passes through — PLD_LEN and RESERVED are the answers
-  // to the length and timing estimates, and BUCKET is zeroed too, so the
+  // package: only REFERENCE passes through — PLD_LEN and RESERVED are the answers
+  // to the length and timing estimates, and other fields are zeroed too, so the
   // header carries nothing but the challenge identity. Constant, so it
   // folds away in synthesis.
   canon_rsp_hdr_t san_flds;
   always_comb begin
-    san_flds        = '0;
-    san_flds.id     = '1;
+    san_flds           = '0;
+    san_flds.reference = '1;
   end
   wire canon_rsp_hdr_bits_t san_mask = canon_rsp_hdr_to_wire_bits(san_flds);
   // the mask word walking with the header beats
@@ -197,10 +197,10 @@ module recomp_feed
   // exactly the cycle DISPATCH exits (the last frame's scoring has landed,
   // the clear follows)
   assign out_valid = (state == DISPATCH) && (sc_state == SC_IDLE);
-  assign id_out    = resp_hdr.id;
+  assign id_out    = {resp_hdr.dir, resp_hdr.bucket, resp_hdr.slot};
   assign u_out     = 64'(u_acc);
 
-  wire _unused = &{1'b0, tkeep_e, resp_hdr.bucket};
+  wire _unused = &{1'b0, tkeep_e, resp_hdr.pkt_type, resp_hdr.reference};
 
   // ---- packet port routing ----
   // A slave beat either FORWARDS to the master — the handshake passes

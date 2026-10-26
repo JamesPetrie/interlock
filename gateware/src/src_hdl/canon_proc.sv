@@ -131,10 +131,12 @@ module canon_proc
   // S_HEADER, so the register content is exactly the header once it is in
   // (the cast checks the sizes match at elaboration).
   // ------------------------------------------------------------------
-  wire canon_id_t      hdr_id;
-  wire canon_id_t      hdr_ref;
   wire canon_len_t     hdr_pld_len;
+  wire canon_type_t    hdr_type;
+  wire canon_dir_t     hdr_dir;      // position: DIR, BUCKET, SLOT
   wire canon_bkt_t     hdr_bkt;
+  wire canon_slot_t    hdr_slot;
+  wire canon_id_t      hdr_ref;
   wire canon_kcommit_t hdr_kcommit;
   wire                 hdr_rsvd_clr;
 
@@ -142,17 +144,21 @@ module canon_proc
     if (DIR == CANON_DIR_REQ) begin : g_canon_req
       wire canon_req_hdr_t parsed = canon_req_hdr_from_wire_bits(shift_data);
       assign hdr_pld_len  = parsed.pld_len;
+      assign hdr_type     = parsed.pkt_type;
+      assign hdr_dir      = parsed.dir;
       assign hdr_bkt      = parsed.bucket;
-      assign hdr_id       = parsed.id;
+      assign hdr_slot     = parsed.slot;
       assign hdr_ref      = parsed.reference;
       assign hdr_kcommit  = parsed.key_commit;
       assign hdr_rsvd_clr = (parsed.reserved0 == '0);
     end else begin : g_canon_rsp
       wire canon_rsp_hdr_t parsed = canon_rsp_hdr_from_wire_bits(shift_data);
       assign hdr_pld_len  = parsed.pld_len;
+      assign hdr_type     = parsed.pkt_type;
+      assign hdr_dir      = parsed.dir;
       assign hdr_bkt      = parsed.bucket;
-      assign hdr_id       = parsed.id;
-      assign hdr_ref      = '0;
+      assign hdr_slot     = parsed.slot;
+      assign hdr_ref      = parsed.reference;
       assign hdr_kcommit  = '0;
       assign hdr_rsvd_clr = (parsed.reserved0 == '0);
     end
@@ -168,7 +174,9 @@ module canon_proc
   // Header checks (combinational, gate the head in S_HEADER)
   // ------------------------------------------------------------------
 
-  canon_id_t      prev_id;
+  // the lowest slot the next packet may use: one past the last fully
+  // verified packet's, restarting at 0 with every tick in both directions
+  canon_slot_t    next_slot;
   canon_bkt_t     curr_bkt;
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -187,18 +195,25 @@ module canon_proc
                        && (shift_keep[HDR_BYTES-1 -: 4] == '1); // tail tkeep all 1s
   // PLD_LEN check
   wire hdr_pld_len_chk = (hdr_pld_len <= canon_len_t'(PLD_MAX));
-  // PLD_LEN remainder check for inference packets
-  wire hdr_pld_rem_chk = !hdr_id.inf || (hdr_pld_len % canon_len_t'(CANON_TOK_BYTES)) == '0;
+  // PLD_LEN remainder check
+  wire hdr_pld_rem_chk = (hdr_pld_len % canon_len_t'(CANON_TOK_BYTES)) == '0;
+  // TYPE check: only traffic is forwarded
+  wire hdr_type_chk = (hdr_type == CANON_TYPE_TRAFFIC);
+  // DIR check
+  wire hdr_dir_chk = RECOMP || (hdr_dir == DIR);
   // bucket check
   wire hdr_bkt_chk = (hdr_bkt == curr_bkt);
-  // ID value validity check
-  wire hdr_id_valid_chk  = (hdr_id.id_cont != '0) &&
-                           (!RECOMP || hdr_id.inf);
-  // ID sequence check
-  // Note: prev_id is reset on bucket boundary for RSP direction (overtake support)
-  wire hdr_id_seq_chk  = (hdr_id.id_cont > prev_id.id_cont) ? 1'b1 : 1'b0;
-  // REFERENCE check
-  wire hdr_ref_chk = (DIR == CANON_DIR_REQ) ? (hdr_ref < hdr_id) : 1'b1;
+  // SLOT capacity check
+  wire hdr_slot_chk = (hdr_slot < CANON_NUM_SLOT);
+  // SLOT sequence check: strictly increasing within the bucket
+  wire hdr_seq_chk = (hdr_slot >= next_slot);
+  // REFERENCE check: a root packet references itself; same log — not a
+  // later position; other log — a strictly earlier bucket
+  wire hdr_ref_dir_ok   = (hdr_ref.dir == CANON_DIR_REQ) || (hdr_ref.dir == CANON_DIR_RSP);
+  wire hdr_ref_same_dir = (hdr_ref.dir == hdr_dir);
+  wire hdr_ref_pos_le   = ({hdr_ref.bucket, hdr_ref.slot} <= {hdr_bkt, hdr_slot});
+  wire hdr_ref_bkt_lt   = (hdr_ref.bucket < hdr_bkt);
+  wire hdr_ref_chk = hdr_ref_dir_ok && (hdr_ref_same_dir ? hdr_ref_pos_le : hdr_ref_bkt_lt);
   // RESERVED value check
   wire hdr_rsvd_chk = hdr_rsvd_clr;
 
@@ -206,15 +221,17 @@ module canon_proc
   // content rules, disabled wholesale on the recomp ingress
   wire hdr_content_chk =  RECOMP
                       || (
-                             hdr_id_seq_chk
+                             hdr_seq_chk
                           && hdr_ref_chk
                           && hdr_rsvd_chk);
 
   wire hdr_chk =    hdr_fract_chk       // integrity: full header
-                 && hdr_id_valid_chk    // integrity: valid ID value
                  && hdr_pld_len_chk     // integrity: buffer sizing
                  && hdr_pld_rem_chk     // integrity: token alignment
+                 && hdr_type_chk        // integrity: traffic packet
+                 && hdr_dir_chk         // integrity: this port's log
                  && hdr_bkt_chk         // integrity: timing isolation
+                 && hdr_slot_chk        // integrity: slot capacity
                  && hdr_content_chk;
 
   wire canon_len_t total = canon_len_t'(HDR_BYTES) + hdr_pld_len;
@@ -224,7 +241,7 @@ module canon_proc
   // ------------------------------------------------------------------
   canon_len_t     exp_total;         // total of the packet being emitted
   canon_len_t     out_cnt;           // bytes forwarded so far this packet
-  canon_id_t      cur_id;            // header fields of the packet being
+  canon_slot_t    cur_slot;          // slot of the packet being emitted
 
   // the word at the shift register head needs emitting
   // - S_HEADER
@@ -270,9 +287,9 @@ module canon_proc
       nonce_r      <= '0;
       exp_digest_r <= '0;
     end else if (hdr_rdy && hdr_fract_chk) begin
-      case(hdr_id)
-        0: nonce_r      <= CANON_NONCE_W'(hdr_kcommit);
-        1: exp_digest_r <= SHA256_DIGEST_W'(hdr_kcommit);
+      case (hdr_type)
+        CANON_TYPE_NONCE: nonce_r      <= CANON_NONCE_W'(hdr_kcommit);
+        CANON_TYPE_EXP:   exp_digest_r <= SHA256_DIGEST_W'(hdr_kcommit);
         default: ;
       endcase
     end
@@ -287,9 +304,9 @@ module canon_proc
   end
 
   // first accepted-packet arrival of the current bucket
-  logic       first_seen;
-  canon_id_t  first_id;
-  canon_len_t first_delta;
+  logic        first_seen;
+  canon_slot_t first_slot;
+  canon_len_t  first_delta;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -299,8 +316,8 @@ module canon_proc
       first_seen <=  1'b0;
       exp_total  <= '0;
       out_cnt    <= '0;
-      cur_id     <= '0;
-      prev_id    <= '0;
+      cur_slot   <= '0;
+      next_slot  <= '0;
       tvalid_m_r <= 1'b0;
       tlast_m_r  <= 1'b0;
       tdata_m_r  <= '0;
@@ -322,9 +339,7 @@ module canon_proc
         tkeep_m_r  <=    '0;
         tlast_m_r  <=  1'b1;
         first_seen <=  1'b0;
-        if (DIR == CANON_DIR_RSP) begin
-          prev_id <= '0; // reset the sequence on the response side
-        end
+        next_slot  <=    '0; // the slot sequence restarts with the bucket
       end
 
       if (advance) begin
@@ -358,11 +373,11 @@ module canon_proc
               if (hdr_chk) begin
                 if (!first_seen) begin
                   first_seen   <= 1'b1;
-                  first_id     <= hdr_id;
+                  first_slot   <= hdr_slot;
                   first_delta  <= timer;
                 end
                 // capture header fields for payload and sequence checks
-                cur_id     <= hdr_id;
+                cur_slot   <= hdr_slot;
                 exp_total  <= total;
                 state      <= S_EMIT; // packet passed header checks, start forwarding
               end else if (shift_last[0]) begin
@@ -385,7 +400,7 @@ module canon_proc
               state <= S_HEADER;
               // fully verified packet: advance the sequence state
               if (!pkt_drop) begin
-                prev_id <= cur_id;
+                next_slot <= cur_slot + 1'b1;
               end
             end
           end
@@ -412,10 +427,14 @@ module canon_proc
   wire canon_req_hdr_t sync_hdr;
 
   assign sync_hdr.pld_len     = '0;
+  assign sync_hdr.pkt_type    = CANON_TYPE_SYNC;
+  // position: the log this sync reports on, the bucket the tick closes, and
+  // the slot of that bucket's first accepted packet (all-ones if none)
+  assign sync_hdr.dir         = DIR;
   assign sync_hdr.bucket      = curr_bkt;
-  assign sync_hdr.id          = CANON_SYNC_ID;
-  assign sync_hdr.reference   = first_seen ? first_id         : '0;
-  assign sync_hdr.reserved0   = first_seen ? 64'(first_delta) : '1;
+  assign sync_hdr.slot        = first_seen ? first_slot : '1;
+  assign sync_hdr.reference   = '0;
+  assign sync_hdr.reserved0   = first_seen ? 64'(first_delta) : '1; // DELTA
   assign sync_hdr.key_commit  = '0; // not used in sync packets
 
 

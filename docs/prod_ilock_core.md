@@ -45,8 +45,8 @@ The endpoints' side of the contract:
 
 - speak **canonical packets**, one per Ethernet frame (a packet must fit the frame's DATA field);
 - stamp each packet with the **current bucket**, tracked from the sync packets arriving on the sender's own ingress wire (see the canon doc);
-- keep **IDs monotonic** (per session inbound, per bucket outbound — the prover pre-sorts);
-- inject the verifier's **nonce** as the reserved `ID = 0` control packet on the request path;
+- keep **slots increasing** within each bucket;
+- inject the verifier's **nonce** as a control packet on the request path;
 - leave room for the spliced-in streams — **certificates** on the response egress, **sync packets** on both — by reserving their bandwidth on the fill side (see below);
 - treat drops as silent — there is no error path by design; recovery is a new request after timeout.
 
@@ -71,7 +71,7 @@ A single free-running timer paces the whole device, configured by one parameter:
 
 ## Control paths
 
-- **Nonce** — the request-side canon latches `KEY_COMMIT` of the `ID = 0` packet and drives `cert_build.in_nonce` continuously; the response-side canon's nonce output is unused (no `KEY_COMMIT` in that header).
+- **Nonce** — the request-side canon latches `KEY_COMMIT` of the nonce packet and drives `cert_build.in_nonce` continuously; the response-side canon's nonce output is unused (no `KEY_COMMIT` in that header).
 - **Sync** — each canon's sync packet is spliced into the **opposite** direction's egress mux: feedback toward that direction's sender. The request egress carries {requests, response-side sync}; the response egress carries {responses, certificate, request-side sync}.
 - **Certificate** — a message pairs the two commits' hash pulses with the latched nonce and emits toward the client on the response egress.
 
