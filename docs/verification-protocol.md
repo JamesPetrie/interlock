@@ -17,7 +17,7 @@ More precisely, the protocol gives the verifier four properties about a compute 
 - **P2 — No rewriting.** What the prover can later claim about past traffic is fixed at the time the traffic occurred, before any challenge is known.
 - **P3 — Measurable explanation.** For any randomly sampled output, the verifier obtains a sound upper bound U on the information in it that is not explained by a declared computation on committed inputs.
 - **P4 — Timeline integrity.** Traffic volume and bucket numbering are anchored to wall-clock time; history cannot be stretched, replayed, or run ahead.
-- **P5 (prover) — Confidentiality.** The verifier learns packet lengths, request IDs, timing, and U — never payloads, keys, or weights.
+- **P5 (prover) — Confidentiality.** The verifier learns packet lengths, positions and references, timing, and U — never payloads, keys, or weights.
 
 Scope: single-shot pairs and multi-part exchanges (multi-turn, long inputs, long outputs) via the reference structure below; size/time-distribution accounting deferred.
 
@@ -55,10 +55,10 @@ A log is a time-ordered sequence of packets; there is one log per direction. Tim
 **Input (request) packet 64 bytes:**
 
 ```
-         32 bit     32 bit          64 bit
-      +----------+----------+---------------------+
-      | PLD_LEN  |  BUCKET  |          ID         |
-      +----------+----------+---------------------+
+         32 bit     32 bit  16 bit  32 bit   16 bit
+      +----------+----------+----+-----------+----+
+      | PLD_LEN  |   TYPE   |DIR |   BUCKET  |SLOT|
+      +----------+----------+----+-----------+----+
       |      REFERENCE      |       RESERVED      |
       +---------------------+---------------------+
       |                                           |
@@ -71,43 +71,57 @@ A log is a time-ordered sequence of packets; there is one log per direction. Tim
 
 
 ```
-         32 bit     32 bit          64 bit
-      +----------+----------+---------------------+
-      | PLD_LEN  |  BUCKET  |          ID         |
-      +----------+----------+---------------------+
+         32 bit     32 bit  16 bit  32 bit   16 bit
+      +----------+----------+----+-----------+----+
+      | PLD_LEN  |   TYPE   |DIR |   BUCKET  |SLOT|
+      +----------+----------+----+-----------+----+
+      |      REFERENCE      |       RESERVED      |
+      +---------------------+---------------------+
       |                                           |
-      +-                                         -+
-      |                  RESERVED                 |
-      +-                                         -+
+      +-                 RESERVED                -+
       |                                           |
       +-------------------------------------------+
 ```
 
 #### Common HEADER fields
 
-These three fields sit at the top of both frames, at the same byte offsets.
+These fields sit at the top of both frames, at the same byte offsets.
 
 **PLD_LEN** \
 Length of the ciphertext payload.
 
-<!-- REVISIT OK to use 32 bit BUCKET? it fits nicely in both REQ and RSP -->
+**TYPE** (word 2) \
+What kind of packet this is, encoded in the low nibble of the word; the upper bits are zero. A Traffic packet is a request or a response according to its `DIR`.
+
+| TYPE | Packet |
+|---|---|
+| 0x0 | Certificate (control) |
+| 0x1 | Nonce (control) |
+| 0x2 | Sync (control) |
+| 0xF | Traffic |
+| other | RESERVED |
+
+**DIR** \
+The log the packet belongs to:
+| DIR | Packet |
+|---|---|
+| 0x0000 | Inbound (Request) |
+| 0xFFFF | Outbound (Response) |
+| other | RESERVED |
+
+<!-- REVISIT a 32-bit BUCKET at 1 ms rolls over after ~49.7 days; the paper's bucket number does not roll over -->
 **BUCKET** \
 Index of the time bucket the packet is targeting.
 
-<!-- REVISIT do we need the inference flag? -->
-**ID** \
-Identifier of the transaction. \
-**ID[0]** is the Inference flag, must be set for inference requests. \
-IDs 0 and 1 are RESERVED for control packets (see [Control packets](#control-packets)).
-
-#### Request Only HEADER fields
+**SLOT** \
+The packet's slot within the bucket; strictly increasing across the packets the sender places in that bucket.
 
 **REFERENCE** \
-Identifier of the transaction referenced in the current request. \
-Set to 0 (RESERVED) if no previous transaction is referenced. \
+`ID` (`DIR ‖ BUCKET ‖ SLOT`) of an earlier *packet* \
 The REFERENCE feature provides support for multi-turn conversations and multi-packet messages. See [References and multi-part exchanges](#references-and-multi-part-exchanges). \
-REFERENCE must be strictly less than ID.
-(A response inherits its context through its request, so it carries no reference.)
+A root packet references itself. REFERENCE must not be later than the packet: in the same direction `REFERENCE <= ID`, across directions `REFERENCE.BUCKET < BUCKET` (see the validity rules).
+
+#### Request Only HEADER fields
 
 **KEY_COMMIT** \
 Cryptographic commitment to the key material used for this request and its response.
@@ -118,30 +132,33 @@ The cleartext header carries only what a trusted party must act on without decry
 **Validity rules**, enforced by the interlock on the fly (violating packets are dropped — never forwarded, never hashed): \
 - the packet carries a complete header
 - `PLD_LEN ≤ S_max`; `S_max` is fixed by construction — a packet must fit one Ethernet frame, so it is the frame's DATA field minus the header
+- `TYPE` is Traffic
+- `DIR` matches the port
 - `BUCKET` equals the interlock's current bucket when the header is checked (the sender tracks it from the sync packets)
-- `ID ∉ {0, 1}` (reserved for control packets)
-- `ID` strictly increasing across the session inbound
-- `ID` strictly increasing within each bucket outbound (out-of-order responses support)
-  - The prover pre-sorts
-  - The outbound comparator resets per bucket
-- `REFERENCE < ID` (inbound)
+- `SLOT < NUM_SLOT`, the slot capacity of a bucket (a build parameter)
+- `SLOT` strictly increasing within each bucket, in both directions; the comparator resets at every tick
+- `REFERENCE` is not later than the packet: same direction `REFERENCE <= ID`, other direction `REFERENCE.BUCKET < BUCKET`
 - `RESERVED` fields zero
-- inference packets (`ID[0]` set) carry a whole number of token units in the payload
+- payloads carry a whole number of token units (for recomputation)
 - Drops leave no trace in commitments
   - A dropped packet never exits the node, so it carries no exfiltration risk
   - The prover initiates each transaction and notices drops via timeout
 
+```
+TODO payloads carry a whole number of token units - should be relxed if we move to compression
+```
+
 ### Control packets
 
-Two control packets are header-only and ride on the wire next to the traffic packets. Both carry their reserved `ID` at the same offset as a traffic packet's `ID`.
+Three control packets ride on the wire next to the traffic packets, identified by their `TYPE` at the same offset as a traffic packet's. The nonce and sync packets are header-only; the certificate packet carries a body.
 
 **Nonce packet** — sent inbound by the prover frontend whenever the verifier issues a nonce. The interlock latches `NONCE` and drops the packet; it is never forwarded (the recomputation interlock instead forwards it as the challenge start marker, see Option 1). Nothing is authenticated (see [Nonce latch](#nonce-latch)).
 
 ```
-         32 bit     32 bit          64 bit
-      +----------+----------+---------------------+
-      | RESERVED |  BUCKET  |        ID = 0       |
-      +----------+----------+---------------------+
+         32 bit     32 bit  16 bit  32 bit   16 bit
+      +----------+----------+----+-----------+----+
+      | RESERVED |   TYPE   |DIR |   BUCKET  |SLOT|
+      +----------+----------+----+-----------+----+
       |                                           |
       +-                 RESERVED                -+
       |                                           |
@@ -150,8 +167,11 @@ Two control packets are header-only and ride on the wire next to the traffic pac
       +-------------------------------------------+
 ```
 
-**BUCKET** \
-The current bucket, as in a traffic packet. (Only used in the recomputation interlock.)
+**TYPE** \
+1 — Nonce.
+
+**DIR, BUCKET and SLOT** \
+The packet's position. (Only used in the recomputation interlock.)
 
 **NONCE** \
 The verifier-supplied nonce, 128 bits.
@@ -159,11 +179,11 @@ The verifier-supplied nonce, 128 bits.
 **Sync packet** — emitted by the interlock once per bucket tick, on each direction, and routed back toward that direction's *own* sender (the request-side sync reaches the frontend, the response-side sync reaches the compute node). It is the sender's time reference for stamping `BUCKET` in its traffic packets.
 
 ```
-         32 bit     32 bit          64 bit
-      +----------+----------+---------------------+
-      | RESERVED |  BUCKET  |        ID = 1       |
-      +----------+----------+---------------------+
-      |       FIRST_ID      |      FIRST_DELTA    |
+         32 bit     32 bit  16 bit  32 bit   16 bit
+      +----------+----------+----+-----------+----+
+      | RESERVED |   TYPE   |DIR |   BUCKET  |SLOT|
+      +----------+----------+----+-----------+----+
+      |       RESERVED      |        DELTA        |
       +---------------------+---------------------+
       |                                           |
       +-                 RESERVED                -+
@@ -171,25 +191,35 @@ The verifier-supplied nonce, 128 bits.
       +-------------------------------------------+
 ```
 
+**TYPE** \
+2 — Sync.
+
+**DIR** \
+The log this sync reports on — the same value the sender is using.
+
 **BUCKET** \
-The bucket the sync feeds back on.
+The bucket the sync feeds back on — the one that just closed.
 
-**FIRST_ID** \
-The ID of the first accepted packet in the bucket; ZERO if none. The reported packet may later be dropped for its payload.
+**SLOT** \
+The slot of the first accepted packet in the bucket. All-ONES if none.
 
-**FIRST_DELTA** \
+**DELTA** \
 Interlock timer value (fabric-clock cycles since the bucket started) of the first accepted header in the bucket; all-ONES if none. The reported packet may later be dropped for its payload.
 
 ### Certificate packet 224 bytes
 
 Every second the interlock emits a certificate packet toward the frontend, committing to the last 1000 buckets of both logs, computed incrementally as packets stream through. It is not itself committed. The packet is a 64-byte header followed by the 160-byte certificate.
 
-**Header 64 bytes** — all zero; `ID = 0` at the ID offset identifies the packet.
+**Header 64 bytes** — all zero; `TYPE = 0` (Certificate) identifies the packet. The value is chosen so that the format-unaware builder's all-zero header is well-formed.
+
+```
+TODO (revisit): the certificate packet does not carry a proper PLD_LEN
+```
 
 ```
          32 bit     32 bit          64 bit
       +----------+----------+---------------------+
-      | RESERVED | RESERVED |        ID = 0       |
+      | RESERVED |  TYPE=0  |      RESERVED       |
       +----------+----------+---------------------+
       |                                           |
       +-                                         -+
@@ -330,25 +360,26 @@ During a challenge the recomputation interlock and the recomputation node exchan
 
 ## References and multi-part exchanges
 
-A single request→response pair handles a one-shot prompt that fits in one packet. Everything larger — a multi-turn conversation, a prompt too big for one packet, a response too big for one packet — is built from the same primitive: a request carries a `REFERENCE` pointing at an earlier request whose context it extends. The chain of references is the assembled context.
+A single request→response pair handles a one-shot prompt that fits in one packet. Everything larger — a multi-turn conversation, a prompt too big for one packet, a response too big for one packet — is built from the same primitive: a packet carries a `REFERENCE` pointing at an earlier packet whose context it extends. The chain of references is the assembled context.
 
 This costs the interlock nothing. A `REFERENCE` is just bytes in the header that it hashes like any other field; all the chaining logic lives in the (untrusted) frontend and compute and is *verified* after the fact by the verifier walking references through cert-bound records.
 
-**Context assembly.** To recompute the response to request `q`: walk back from `q` along `REFERENCE`, and for each request in the chain include its payload *and its response, if one is cert-bound*. The root (null reference) bottoms out the recursion; its payload is genuine external input. The rule is uniform — *context = the cert-bound chain* — and it covers every case below.
+**Context assembly.** To recompute the response with reference `q`: walk back from `q` along `REFERENCE`, and for each packet in the chain include its payload. The root (self-reference) bottoms out the recursion; its payload is genuine external input. The rule is uniform — *context = the cert-bound chain* — and it covers every case below.
 
 **The three applications, one mechanism:**
 
-- **Multi-turn.** Turn *n*'s request references turn *n−1*'s request; the chain pulls in every prior turn's prompt and response.
-- **Long input.** The frontend (or customer) splits a large prompt into chunks sent as a reference chain, all but the last carrying no response. They can be sent in a burst — the chain, not arrival order or bucket position, defines assembly order — subject only to staying under per-bucket capacity `C`. The final chunk is the one that draws a response.
-- **Long output.** A response is capped at `S_max`; compute emits a bounded chunk and the frontend issues a continuation request referencing it, which draws the next chunk. The continuation carries no new payload content, only the reference, so it is not an input channel.
+- **Multi-turn.** Turn *n*'s request references turn *n−1*'s response; the chain pulls in every prior turn's prompt and response.
+- **Long input.** The frontend (or customer) splits a large prompt into chunks sent as a reference chain, all but the last carrying no response. They can be sent in a burst. The final chunk is the one that draws a response.
+- **Long output.** A response is capped at `S_max`; compute emits a bounded chunk and the frontend schedules a continuation using the last response chunk as the reference.
 
-**Completion markers live in the encrypted payload.** Whether a request is the final chunk ("compute now") and whether a response is complete (EOS) vs. truncated are decided by compute and the frontend, who hold the keys — not by the interlock or verifier. So these markers are payload tokens, not header fields: cert-bound via `pld_digest`, reproduced by recomputation as ordinary prompt/output tokens, and invisible to the trusted parties. The verifier never needs them — it identifies the response-triggering request by id-match, and intermediate chunks as chain links with no matching response.
+**Completion markers live in the encrypted payload.** Whether a request is the final chunk ("compute now") and whether a response is complete (EOS) vs. truncated are decided by compute and the frontend, who hold the keys — not by the interlock or verifier. So these markers are payload tokens, not header fields: cert-bound via `pld_digest`, reproduced by recomputation as ordinary prompt/output tokens, and invisible to the trusted parties. The verifier never needs them — it identifies the response-triggering request through the response's `REFERENCE`.
 
 **Integrity rules** (checked at challenge time, when the chain is opened):
 
-- *Causality / acyclicity.* `REFERENCE` must be an earlier request: the cheap check is `REFERENCE < ID` (monotonic ids), confirmed by `referenced bucket ≤ referencing bucket` when the link is opened. This rules out cycles and forward references.
-- *Cardinality.* One response per request (single-use, as before), but a request may be referenced by *many* later requests — these are different rules. Branching conversations and reuse are fine; a second response to an already-answered request is a violation.
-- *No fabricated links.* Every request in the chain must itself open against a certificate, so a prover cannot splice in a fabricated prior to launder covert output — the generalization of the single-pair fabricated-input defense.
+- *Causality / acyclicity.* `REFERENCE` must be an earlier packet:
+  - if `DIR == REFERENCE.DIR`: `REFERENCE <= ID`
+  - else: `REFERENCE.BUCKET < BUCKET`
+- *No fabricated links.* Every packet in the chain must itself open against a certificate, so a prover cannot splice in a fabricated prior to launder covert output — the generalization of the single-pair fabricated-input defense.
 
 **Graceful degradation, again.** If a referenced request or response was cert-bound but is missing from the prover's record, recomputation assembles a short context, mispredicts, and the gap surfaces as U — the same "certificates are authority, records are best-effort" behavior, with no special handling for chains.
 
@@ -356,11 +387,11 @@ This costs the interlock nothing. A `REFERENCE` is just bytes in the header that
 
 1. **Anchor.** Verifier sends a fresh nonce; prover returns the next certificate echoing it, stamping current bucket `B` within `[t_nonce, t_receipt]`. Verifier logs the anchor and checks counter monotonicity and counter rate vs. wall clock.
 2. **Select.** Uniform `(bucket y, byte x)` over `[B − window, B] × [0, C)`, where `C` is the per-bucket capacity: the interlock's buffer bank size, a device parameter, so the bound is exact by construction — the interlock cannot pass more than `C` bytes in a bucket, and whether a bucket is filled is up to the prover. Uniform-over-capacity is size-weighted sampling: every transmitted byte is equally likely to be challenged; an `x` past the bucket's content is a cheap liveness check.
-3. **Open.** From its log, the prover derives and sends the smallest slice sufficient for the verifier to recompute the certificate: the stored certificate covering `y`, the 1000 output `bkt_digest` from that second, bucket `y`'s records, and the hit packet's header and `pld_digest` — plus the same opening for the matching input packet in bucket `w` (certificate, 1000 `bkt_digest`, records, HEADER, `pld_digest`, `KEY_COMMIT`). If `Σ PLD_LEN < x` the record list alone proves emptiness and the challenge ends. Under the ZKP option no ciphertext is ever sent to the verifier.
+3. **Open.** From its log, the prover derives and sends the smallest slice sufficient for the verifier to recompute the certificate: the stored certificate covering `y`, the 1000 output `bkt_digest` from that second, bucket `y`'s records, and the hit packet's header and `pld_digest` — plus the same opening for the reference packet in bucket `w` (certificate, 1000 `bkt_digest`, records, HEADER, `pld_digest`, `KEY_COMMIT`). If `Σ PLD_LEN < x` the record list alone proves emptiness and the challenge ends. Under the ZKP option no ciphertext is ever sent to the verifier.
 4. **Recompute.** The prover supplies a recomputation certificate (next section) binding to the opened values.
-5. **Verify**, in order: (a) both certificates' AUTH_TAGs and `DEVICE` against the anchor log; (b) the supplied 1000 `bkt_digest` recompute each certificate's `cert_digest` (INWARD and OUTWARD); (c) the records recompute the two `bkt_digest`; (d) byte `x` falls in the claimed packet per cumulative `PLD_LEN`; (e) input binding — the response's context chain (References) opens against certificates, each link earlier than the next, `ID`s matching, the challenged request having explained no other response; (f) the recomputation certificate verifies against `(H1_in, H2, H1_out)`, yielding U.
+5. **Verify**, in order: (a) both certificates' AUTH_TAGs and `DEVICE` against the anchor log; (b) the supplied 1000 `bkt_digest` recompute each certificate's `cert_digest` (INWARD and OUTWARD); (c) the records recompute the two `bkt_digest`; (d) byte `x` falls in the claimed packet per cumulative `PLD_LEN`; (e) input binding — the response's context chain (References) opens against certificates, each link earlier than the next, each `REFERENCE` resolving to the opened position; (f) the recomputation certificate verifies against `(H1_in, H2, H1_out)`, yielding U.
 
-Input binding closes the fabricated-input cheat (a "request" containing the covert output would recompute with zero surprisal); single-use closes its amortized variant (one innocent request explaining many responses). For a single-shot pair the chain is one link; for multi-part exchanges it is the full reference chain, opened the same way.
+Input binding closes the fabricated-input cheat (a "request" containing the covert output would recompute with zero surprisal). For a single-shot pair the chain is one link; for multi-part exchanges it is the full reference chain, opened the same way.
 
 ## Recomputation certificate
 
@@ -409,4 +440,4 @@ Both instantiations end at the same interface. The ZKP binds `(H1_in, H2, H1_out
 
 ## Suggested parameters
 
-`H` = SHA-256; MAC = HMAC-SHA-256 (pre-shared `k`); bucket = 1 ms; certificate period = 1 s; `ID` = 64-bit; `S_max` = one Ethernet frame's DATA field minus the header (fixed by construction); per-bucket capacity `C` = the interlock's buffer bank size (a build parameter); challenge window = 30 days (prover-side log storage).
+`H` = SHA-256; MAC = HMAC-SHA-256 (pre-shared `k`); bucket = 1 ms; certificate period = 1 s; `ID` = 64-bit `NUM_SLOT` = 64; `S_max` = one Ethernet frame's DATA field minus the header (fixed by construction); per-bucket capacity `C` = the interlock's buffer bank size (a build parameter); challenge window = 30 days (prover-side log storage).

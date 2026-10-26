@@ -64,11 +64,13 @@ verifier ↔ prover frontend ↔ [ port 0 | FPGA fabric | port 1 ] ↔ compute n
   stripped or overwritten, and the FCS is discarded and recomputed. Only the
   canonical payload crosses, verbatim.
 - **Canonical-packet checks** (`canon_proc` + gate): all traffic is structured
-  as packets with a fixed 64-byte cleartext header (length, time-bucket, id,
-  reference, key-commitment) and an end-to-end-encrypted payload the device
-  never decrypts. The device enforces: length in range, ids strictly
-  increasing per direction, the declared bucket exactly matching the device's
-  own bucket counter, reserved fields zero. Violating packets are silently
+  as packets with a fixed 64-byte cleartext header (length, type, position —
+  direction, time-bucket, slot — reference, key-commitment) and an
+  end-to-end-encrypted payload the device never decrypts. The device
+  enforces: length in range, type and direction valid for the port, the
+  declared bucket exactly matching the device's own bucket counter, slots
+  strictly increasing within the bucket, the reference no later than the
+  packet, reserved fields zero. Violating packets are silently
   dropped — no drop counters, no status frames, no observable side effects.
 - **Commitment pipeline** (`traffic_commit`): per packet, a record
   `length ‖ SHA256(header ‖ H(payload))`; per 1 ms bucket, a running SHA-256
