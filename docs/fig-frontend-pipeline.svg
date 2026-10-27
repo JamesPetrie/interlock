@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="830" height="190" viewBox="0 0 830 190" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto-start-reverse">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#333"/>
+    </marker>
+  </defs>
+  <rect width="830" height="190" fill="#ffffff"/>
+
+  <!-- zones -->
+  <path d="M 20 60 H 383 V 170 H 20 A 10 10 0 0 1 10 160 V 70 A 10 10 0 0 1 20 60 Z" fill="#fef3e2" stroke="none"/>
+  <text x="20" y="80" font-size="12" font-style="italic" fill="#8a5a00">plaintext</text>
+  <path d="M 383 60 H 622 A 10 10 0 0 1 632 70 V 160 A 10 10 0 0 1 622 170 H 383 Z" fill="#eef3f8" stroke="none"/>
+  <text x="393" y="80" font-size="12" font-style="italic" fill="#2b5b8f">ciphertext</text>
+
+  <!-- stage boxes -->
+  <g font-size="14" text-anchor="middle">
+    <rect x="20"  y="100" width="110" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="75"  y="130" fill="#333">FastAPI</text>
+    <rect x="174" y="100" width="110" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="229" y="130" fill="#333">Tokenizer</text>
+    <rect x="328" y="100" width="110" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="383" y="130" fill="#333">Crypto</text>
+    <rect x="482" y="100" width="130" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="547" y="130" fill="#333">Dispatcher</text>
+    <rect x="656" y="100" width="70" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <text x="691" y="130" fill="#333">Log</text>
+  </g>
+
+  <!-- bidirectional arrows -->
+  <g stroke="#333" stroke-width="2" marker-start="url(#arr)" marker-end="url(#arr)">
+    <line x1="134" y1="125" x2="170" y2="125"/>
+    <line x1="288" y1="125" x2="324" y2="125"/>
+    <line x1="442" y1="125" x2="478" y2="125"/>
+    <line x1="616" y1="125" x2="652" y2="125"/>
+    <line x1="730" y1="125" x2="772" y2="125"/>
+  </g>
+  <text x="780" y="129" font-size="13" fill="#333">wire</text>
+</svg>

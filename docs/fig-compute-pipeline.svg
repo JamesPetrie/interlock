@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="190" viewBox="0 0 680 190" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto-start-reverse">
+      <polygon points="0 0, 9 3.5, 0 7" fill="#333"/>
+    </marker>
+  </defs>
+  <rect width="680" height="190" fill="#ffffff"/>
+
+  <!-- zones -->
+  <path d="M 215 60 H 444 V 170 H 215 A 10 10 0 0 1 205 160 V 70 A 10 10 0 0 1 215 60 Z" fill="#eef3f8" stroke="none"/>
+  <text x="215" y="80" font-size="12" font-style="italic" fill="#2b5b8f">ciphertext</text>
+  <path d="M 444 60 H 653 A 10 10 0 0 1 663 70 V 160 A 10 10 0 0 1 653 170 H 444 Z" fill="#fef3e2" stroke="none"/>
+  <text x="454" y="80" font-size="12" font-style="italic" fill="#8a5a00">plaintext</text>
+
+  <!-- stage boxes -->
+  <g font-size="14" text-anchor="middle">
+    <rect x="101" y="100" width="70" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <text x="136" y="130" fill="#333">Log</text>
+    <rect x="215" y="100" width="130" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="280" y="130" fill="#333">Dispatcher</text>
+    <rect x="389" y="100" width="110" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="444" y="130" fill="#333">Crypto</text>
+    <rect x="543" y="100" width="110" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="598" y="130" fill="#333">vLLM</text>
+  </g>
+
+  <!-- bidirectional arrows -->
+  <g stroke="#333" stroke-width="2" marker-start="url(#arr)" marker-end="url(#arr)">
+    <line x1="55"  y1="125" x2="97"  y2="125"/>
+    <line x1="175" y1="125" x2="211" y2="125"/>
+    <line x1="349" y1="125" x2="385" y2="125"/>
+    <line x1="503" y1="125" x2="539" y2="125"/>
+  </g>
+  <text x="20" y="129" font-size="13" fill="#333">wire</text>
+</svg>
