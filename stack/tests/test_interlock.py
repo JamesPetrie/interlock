@@ -2,42 +2,13 @@ import asyncio
 import hashlib
 
 from ilstack import packet as P
-from ilstack.interlock import SoftwareInterlock, Ticker
+from harness import ManualTicker, run, settle
+
+from ilstack.interlock import SoftwareInterlock
 from ilstack.wire import MemoryWire
 
 KC = bytes(range(32))
 MAC = b"m" * 32
-
-
-class ManualTicker(Ticker):
-    def __init__(self):
-        self._bucket = 0
-        self._delta = 0
-        self._event = asyncio.Event()
-
-    def bucket(self):
-        return self._bucket
-
-    def delta(self, bucket):
-        return self._delta
-
-    async def wait_for(self, bucket):
-        while self._bucket < bucket:
-            await self._event.wait()
-
-    def advance(self):
-        self._bucket += 1
-        self._event.set()
-        self._event = asyncio.Event()
-
-
-async def settle():
-    for _ in range(5):
-        await asyncio.sleep(0)
-
-
-def run(coro):
-    asyncio.run(asyncio.wait_for(coro, 10))
 
 
 def req(bucket, slot, ref=None, payload=b"abcd", kc=KC):

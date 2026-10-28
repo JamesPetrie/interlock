@@ -35,6 +35,10 @@ class Clock:
     async def ready(self) -> None:
         """Return once the clock can be read."""
 
+    def late(self, bucket: int) -> bool:
+        """Whether a packet stamped `bucket` sent now would arrive after the bucket closed."""
+        return False
+
     def on_sync(self, sync: Sync) -> None:
         """Feedback from the interlock."""
 
@@ -55,6 +59,9 @@ class ManualClock(Clock):
     async def wait_for(self, bucket: int) -> None:
         while self._bucket < bucket:
             await self._event.wait()
+
+    def late(self, bucket: int) -> bool:
+        return self._bucket > bucket
 
 
 class SyncClock(Clock):
@@ -90,6 +97,9 @@ class SyncClock(Clock):
     def interlock_bucket(self) -> int:
         """The interlock's current bucket, as estimated now."""
         return self._closed + 1 + int((time.monotonic() - self._t) / self.L)
+
+    def late(self, bucket: int) -> bool:
+        return self.synced and self.interlock_bucket() > bucket
 
     def on_sync(self, sync: Sync) -> None:
         self.syncs += 1
