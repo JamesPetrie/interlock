@@ -40,6 +40,8 @@ def test_memory_log():
     check(log)
     with pytest.raises(ValueError):
         log.record(P.Sync(P.INBOUND, 1).pack())
+    log.remove(P.Id(P.INBOUND, 5, 0))
+    assert log.bucket(P.INBOUND, 5) == [packets()[0].pack()] and log.get(P.Id(P.INBOUND, 5, 0)) is None
 
 
 def test_file_log_survives_reopen(tmp_path):
@@ -52,4 +54,10 @@ def test_file_log_survives_reopen(tmp_path):
     check(again)
     again.record(P.Traffic(P.Id(P.INBOUND, 7, 0), P.Id(P.INBOUND, 7, 0), KC, b"more").pack())
     assert len(again) == 4 and again.bucket(P.INBOUND, 7)[0].endswith(b"more")
+    again.remove(P.Id(P.INBOUND, 5, 2))
+    again.remove(P.Id(P.INBOUND, 5, 2))                                          # twice is fine
+    assert len(again) == 3 and [len(r) for r in again.bucket(P.INBOUND, 5)] == [64]
     again.close()
+    third = FileLog(str(tmp_path))                                               # the removal survives a reopen
+    assert len(third) == 3 and third.get(P.Id(P.INBOUND, 5, 2)) is None and len(third.bucket(P.INBOUND, 5)) == 1
+    third.close()

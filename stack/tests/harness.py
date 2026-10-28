@@ -5,12 +5,17 @@ from dataclasses import dataclass
 
 from ilstack import packet as P
 from ilstack.clock import ManualClock, SyncClock
+from ilstack.compute import ComputeNode
+from ilstack.crypto import PairKeys
 from ilstack.dispatcher import Dispatcher
+from ilstack.engines import MockEngine
+from ilstack.frontend import Frontend
 from ilstack.interlock import RealTicker, SoftwareInterlock, Ticker
 from ilstack.log import MemoryLog
 from ilstack.wire import MemoryWire
 
 MAC = b"m" * 32
+MASTER = bytes(range(32))
 
 
 class ManualTicker(Ticker):
@@ -85,3 +90,33 @@ async def make_link(params: P.Params = P.Params(), manual: bool = True, lead: in
     await fe.start()
     await co.start()
     return Link(params, fe, co, il, fe_wire, co_wire, ticker, clocks)
+
+
+class Stack:
+    """Frontend and compute through a software interlock on memory wires."""
+
+    def __init__(self, params=P.Params(num_slot=8, bkt_num=20, bucket_ms=20), real=True, timeout=2.0, retries=1,
+                 engine=None):
+        self.params = params
+        self.fe_wire, il_fe = MemoryWire.pair()
+        self.co_wire, il_co = MemoryWire.pair()
+        self.ticker = RealTicker(params.bucket_ms) if real else ManualTicker()
+        clocks = [SyncClock(params.bucket_ms) for _ in range(2)]
+        self.il = SoftwareInterlock(params, il_fe, il_co, MAC, self.ticker)
+        self.fe_log = MemoryLog()
+        self.fe = Frontend(params, Dispatcher(params, self.fe_wire, clocks[0], self.fe_log, P.INBOUND),
+                           PairKeys(MASTER), self.fe_log, timeout=timeout, retries=retries)
+        self.engine = engine or MockEngine()
+        self.co = ComputeNode(params, Dispatcher(params, self.co_wire, clocks[1], MemoryLog(), P.OUTBOUND),
+                              PairKeys(MASTER), self.engine)
+
+    async def __aenter__(self):
+        await self.il.start()
+        await self.fe.start()
+        await self.co.start()
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.fe.stop()
+        await self.co.stop()
+        await self.il.stop()

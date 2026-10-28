@@ -17,8 +17,9 @@ They are logged and handed over as they are, with IDs and references, since
 only the holder of the keys can tell where a message ends. Sync packets
 drive the clock and reveal lost packets: a bucket this node sent into whose
 sync reports nothing accepted, or a first accepted slot above this node's
-first, names packets the interlock dropped. Certificates go to the log and
-to whoever waits for one.
+first, names packets the interlock dropped; they leave the log again, since
+no certificate covers them. Certificates go to the log, to the listeners
+(the frontend's audit) and to whoever waits for one.
 """
 from __future__ import annotations
 
@@ -68,6 +69,7 @@ class Dispatcher:
         self._bucket, self._slot = -1, 0
         self._in_bucket: dict[int, list[P.Id]] = defaultdict(list)         # bucket -> IDs sent into it
         self._last_rx: P.Id | None = None
+        self.certificate_listeners: list[Callable[[P.Certificate], None]] = []
         self._cert_waiters: list[tuple[Callable[[P.Certificate], bool], asyncio.Future]] = []
         self._tasks: list[asyncio.Task] = []
 
@@ -164,6 +166,8 @@ class Dispatcher:
             return
         if isinstance(pkt, P.Certificate):
             self.log.certificate(pkt)
+            for listener in self.certificate_listeners:
+                listener(pkt)
             keep = []
             for pred, fut in self._cert_waiters:
                 if not fut.done() and pred(pkt):
@@ -190,6 +194,7 @@ class Dispatcher:
         lost = [id for id in ids if sync.first_slot == P.NO_SLOT or id.slot < sync.first_slot]
         for id in lost:
             self.stats.lost += 1
+            self.log.remove(id)                           # never accepted: not part of any certificate
             self.lost.put_nowait((id, self.tags.get(id)))
 
     async def next_certificate(self, predicate: Callable[[P.Certificate], bool] = lambda c: True) -> P.Certificate:

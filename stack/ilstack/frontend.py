@@ -9,6 +9,11 @@ interlock dropped (the sync says so) or that gets no answer in time is sent
 again under a new pair, a bounded number of times; what the frontend learns
 either way it counts.
 
+Every certificate that arrives is audited against the log: if the log does
+not reproduce it, the interlock dropped something the sync did not reveal,
+and a challenge into that interval would fail. The count is reported; a
+later refinement can localise the packet.
+
 The verifier's nonce goes out as a nonce packet; the certificate that echoes
 it comes back through the dispatcher.
 """
@@ -23,6 +28,7 @@ from .assembly import Assembler, encrypt
 from .crypto import Pair, PairKeys
 from .dispatcher import Dispatcher
 from .log import Log
+from .verifier import audit
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +51,8 @@ class FrontendStats:
     timeouts: int = 0
     failures: int = 0
     unknown_responses: int = 0
+    certificates_ok: int = 0
+    certificates_mismatched: int = 0
 
 
 class Frontend:
@@ -54,6 +62,7 @@ class Frontend:
         self.timeout, self.retries = timeout, retries
         self.stats = FrontendStats()
         self.assembler = Assembler(P.OUTBOUND, self._key_for)
+        self.dispatcher.certificate_listeners.append(self._audit)
         self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
@@ -119,6 +128,15 @@ class Frontend:
             id, tag = await self.dispatcher.lost.get()
             if isinstance(tag, _Pending) and not tag.future.done():
                 tag.future.set_exception(Lost(id))
+
+    def _audit(self, cert: P.Certificate) -> None:
+        res = audit(self.params, self.log, cert)
+        if all(res.values()):
+            self.stats.certificates_ok += 1
+        else:
+            self.stats.certificates_mismatched += 1
+            log.warning("certificate for buckets %d..%d does not match the log: %s", cert.bkt_start,
+                        cert.bkt_start + cert.bkt_num - 1, [k for k, ok in res.items() if not ok])
 
     # --- the verifier's nonce ----------------------------------------------
 

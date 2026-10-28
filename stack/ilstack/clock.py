@@ -66,45 +66,55 @@ class ManualClock(Clock):
 
 class SyncClock(Clock):
     def __init__(self, bucket_ms: float, lead: int = 0, phase: float = 0.5,
-                 delta_unit: float = 1e-6, gain: float = 0.25):
+                 delta_unit: float = 1e-6, gain: float = 0.25, drift: float = 0.02):
         """`lead` extra buckets of margin for a slow sender; `delta_unit` the
         interlock's timer unit in seconds; `gain` how fast the phase follows
-        the DELTA feedback (0 = fixed phase)."""
+        the DELTA feedback (0 = fixed phase); `drift` how fast the origin
+        estimate may move later (it moves earlier at once)."""
         self.L = bucket_ms / 1000.0
         self.lead = lead
         self.phase = phase
         self.delta_unit = delta_unit
         self.gain = gain
-        self._closed: int | None = None       # bucket named by the latest sync
-        self._t: float = 0.0                  # local time that sync arrived
+        self.drift = drift
+        self._origin: float | None = None     # local time at which the interlock's bucket 0 started
+        self._closed = -1                     # bucket named by the latest sync
         self._event = asyncio.Event()
         self.syncs = 0
 
     @property
     def synced(self) -> bool:
-        return self._closed is not None
+        return self._origin is not None
 
     def transmit_time(self, bucket: int) -> float:
         """Local monotonic time at which a packet for `bucket` leaves."""
-        return self._t + (bucket - self._closed - 1 + self.phase) * self.L
+        return self._origin + (bucket + self.phase) * self.L
 
     def bucket(self) -> int:
-        if self._closed is None:
+        if self._origin is None:
             return 0
-        behind = (time.monotonic() - self._t) / self.L - self.phase
-        return self._closed + 1 + max(0, math.ceil(behind)) + self.lead
+        behind = (time.monotonic() - self._origin) / self.L - self.phase
+        return max(self._closed + 1, math.ceil(behind)) + self.lead
 
     def interlock_bucket(self) -> int:
         """The interlock's current bucket, as estimated now."""
-        return self._closed + 1 + int((time.monotonic() - self._t) / self.L)
+        return int((time.monotonic() - self._origin) / self.L)
 
     def late(self, bucket: int) -> bool:
         return self.synced and self.interlock_bucket() > bucket
 
     def on_sync(self, sync: Sync) -> None:
+        """A sync names the bucket that just closed, so bucket+1 started when
+        the sync left the interlock: the earliest arrivals are the least
+        delayed, so the origin follows a lower estimate at once and a higher
+        one only slowly (clock drift between the two machines)."""
         self.syncs += 1
-        if self._closed is None or sync.bucket >= self._closed:
-            self._closed, self._t = sync.bucket, time.monotonic()
+        candidate = time.monotonic() - (sync.bucket + 1) * self.L
+        if self._origin is None or candidate < self._origin:
+            self._origin = candidate
+        else:
+            self._origin += self.drift * (candidate - self._origin)
+        self._closed = max(self._closed, sync.bucket)
         if self.gain and sync.first_slot != NO_SLOT and sync.delta != NO_DELTA:
             landed = sync.delta * self.delta_unit / self.L           # fraction of the bucket
             self.phase = min(0.9, max(0.1, self.phase + self.gain * (0.5 - landed)))
@@ -112,7 +122,7 @@ class SyncClock(Clock):
         self._event = asyncio.Event()
 
     async def ready(self) -> None:
-        while self._closed is None:
+        while self._origin is None:
             await self._event.wait()
 
     async def wait_for(self, bucket: int) -> None:
