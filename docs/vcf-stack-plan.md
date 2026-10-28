@@ -75,12 +75,16 @@ certificates, keeps the anchor log, and holds the HMAC key. The prototype's
 verifier carries over.
 
 **Ingress and TLS.** TLS is terminated at the first machine we control, the
-Hetzner box, by a reverse proxy that holds the public domain's certificate and
-renews it. It forwards plain HTTP into an SSH reverse tunnel that the frontend
-node opens outward, since the cluster exposes only SSH. The tunnel is itself
-encrypted, so the request is protected on every internet leg. The frontend
-process sees plain HTTP on its loopback interface and can be exercised with
-`curl` on the node with nothing in front of it.
+Hetzner box, by a reverse proxy (Caddy) that holds the certificate and renews
+it. The public name is the hostname Hetzner registers for the box's address;
+Let's Encrypt issues for it like for any other name, so no domain had to be
+registered or borrowed. The proxy forwards plain HTTP into an SSH reverse
+tunnel that the frontend job opens outward, since the cluster exposes only
+SSH. The tunnel logs in as a dedicated user on the box that may do nothing but
+forward that one port. The tunnel is itself encrypted, so the request is
+protected on every internet leg. The frontend process sees plain HTTP on its
+loopback interface and can be exercised with `curl` on the node with nothing
+in front of it.
 
 TLS is the outer envelope and ends at the frontend. The interlock's payload
 encryption is the inner envelope and begins there; the two never overlap. If
@@ -244,15 +248,17 @@ protocol change), or the hypervisor must accept frames for the forced address.
 
 ## 7. Phases
 
-| Phase | Deliverable | Wire | Estimate |
-|---|---|---|---|
-| 0 | environment on the shared home, vLLM with a small model on the compute node, outbound internet confirmed, Hetzner proxy + reverse tunnel | — | ½ day |
-| 1 | packet format and key handling with byte-exact tests against the chosen wire format (Appendix A) | — | 1 day |
-| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days |
-| 2b | context reuse: context index on the frontend, context store on compute, suffix-only turns | tcp | 1–2 days |
-| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days |
-| 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day |
-| 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed |
+| Phase | Deliverable | Wire | Estimate | Status |
+|---|---|---|---|---|
+| 0 | environment on the shared home, vLLM with a small model on the compute node, outbound internet confirmed, Hetzner proxy + reverse tunnel | — | ½ day | done 2026-10-27 |
+| 1 | packet format and key handling with byte-exact tests against the chosen wire format (Appendix A) | — | 1 day | — |
+| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | — |
+| 2b | context reuse: context index on the frontend, context store on compute, suffix-only turns | tcp | 1–2 days | — |
+| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | — |
+| 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day | waiting for the admins |
+| 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed | — |
 
 Each phase runs as a long-lived Slurm batch job per node, resubmitted when
 the time limit hits, with the processes talking over the cluster network.
+The code lives in `stack/` (see its README), the batch scripts in
+`stack/deploy/`.
