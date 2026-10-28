@@ -5,10 +5,9 @@ Plan for standing up a realistic inference-serving stack on the VCF
 to end: first over an ordinary TCP tunnel, then over raw ethernet, and finally
 through the FPGA once it is installed in the facility.
 
-Companion to `verification-protocol.md`, the wire format in the repo today,
-and to the paper draft, whose packet model the stack is designed for
-(Appendix A). `prototype/` is the earlier software prototype whose interlock
-and verifier logic carries over. Cluster findings are from 2026-10-27. The
+Companion to `verification-protocol.md`, the wire format the stack
+implements. `prototype/` is the earlier software prototype, kept for
+reference. Cluster findings are from 2026-10-27. The
 paper calls the device the network certifier; this document says interlock
 throughout.
 
@@ -17,7 +16,7 @@ throughout.
 Requests arrive from the internet at a public Hetzner box, which terminates
 TLS and forwards them through an SSH tunnel to the frontend node inside the
 cluster. The frontend tokenizes and encrypts each request and sends it to the
-compute node as positioned packets; the compute node runs the model and
+compute node as packets in the interlock's format; the compute node runs the model and
 returns the response the same way. A software interlock on the link certifies
 the traffic until the FPGA is installed between the two nodes.
 
@@ -56,18 +55,17 @@ inside an attested confidential VM is a useful story later, so it goes on the
 confidential VM. The 8-GPU node serves the model.
 
 **The link.** Everything that crosses between the two nodes is a packet in
-the interlock's format: a public header (position, reference, type) and an
-encrypted payload of token ids. No text ever crosses. Until the FPGA is
+the interlock's format: a public header (ID, reference, key commitment) and
+an encrypted payload of token ids. No text ever crosses. Until the FPGA is
 installed, the packets travel over a TCP tunnel between the nodes; later the
 same packets go out as raw ethernet frames (§6) and the FPGA takes over.
 
 **Software interlock.** Until then, a relay on the TCP link stands in for the
 device: it applies the validity rules, hashes the traffic and emits one
-certificate per epoch, which gives the full certificate and challenge flow
-before silicon. Later it also emits the arrival-time feedback the device will
-send, so bucket sync can be built and tested against it, and its hashes are
-what we diff against the FPGA. It runs on the frontend node for now; it is
-the prototype's software interlock updated to the chosen format.
+certificate per certificate interval, which gives the full certificate and
+challenge flow before silicon. It emits the per-bucket sync feedback the
+device sends, so bucket sync is built and tested against it, and its hashes
+are what we diff against the FPGA. It runs on the frontend node for now.
 
 **Verifier.** Runs on the Hetzner box, outside the cluster. It issues nonces
 and challenges to the frontend over the tunnel, checks openings against
@@ -97,7 +95,7 @@ front of a fixed pipeline. It is the API gateway of a normal serving stack,
 with tokenization and encryption moved into it. Requests flow left to right,
 responses right to left through the same stages.
 
-![Frontend pipeline, both directions: FastAPI, the tokenizer and crypto handle plaintext; the dispatcher turns messages into positioned packets and back; the log at the wire keeps the exact bytes.](fig-frontend-pipeline.svg)
+![Frontend pipeline, both directions: FastAPI, the tokenizer and crypto handle plaintext; the dispatcher turns messages into packets and back; the log at the wire keeps the exact bytes.](fig-frontend-pipeline.svg)
 
 ### Stages
 
@@ -105,17 +103,17 @@ responses right to left through the same stages.
 |---|---|---|
 | **FastAPI + uvicorn** | standard | OpenAI-style endpoints, body validation, API-key auth and a per-key concurrency cap through the framework's security dependency. |
 | **Tokenizer** | standard (HuggingFace) | Chat template and encode on the way in, decode on the way out, `usage` counts. |
-| **Crypto** | standard cipher | Encrypts requests and decrypts responses under the chain key (Appendix A). Last stage that sees plaintext. |
-| **Dispatcher** | custom | Message in, message out. Splits an encrypted request or response into packets, chains them by reference, assigns each its position in order, since the interlock rejects out-of-order packets, and sends them in their bucket windows; on receive, follows references, reassembles, and hands the complete message to the waiting request. Interleaves concurrent requests; capacity is slots per bucket times bucket rate. Later also tracks the interlock's bucket clock from its feedback (bucket sync) and holds the context index. Crypto above it never sees a packet; the wire below it never sees a message. |
-| **Log** | custom | The exact bytes by position, both directions, plus every certificate, kept for the challenge window. Audits each certificate against the log on arrival. |
+| **Crypto** | standard cipher | Encrypts each request under a fresh pair key, committed in the request's headers, and decrypts the response under the same key. Reassembles a response from its packets, since where a message ends is written inside the encrypted payload. Last stage that sees plaintext. |
+| **Dispatcher** | custom | Payloads in, packets out. Stamps each packet of a chain with its ID, the bucket the interlock will be in when the packet arrives (tracked from the sync feedback) and the next slot, links it by reference and sends it in its bucket; on receive, hands packets over in order and reports the ones the sync reveals as dropped. Capacity is slots per bucket times bucket rate. Later holds the context index. Crypto above it never sees a packet; the wire below it never sees a message. |
+| **Log** | custom | The exact bytes by ID, both directions, every certificate and the key material, kept for the challenge window. Audits each certificate against the log on arrival. |
 | **Wire** | config | TCP tunnel now, tap device later (§6). Nothing above it knows which is in use. |
 
 ### Drops
 
-The interlock drops invalid or late packets and forwards nothing about it;
-the position is burned. The frontend notices from the interlock's arrival-time
-feedback or by timeout, and reschedules at a new position with the chain's
-references redone from that point.
+The interlock drops invalid or late packets and forwards nothing about it.
+The frontend learns of a drop from the sync feedback, which names the first
+slot accepted in each bucket, or by timeout, and sends the request again as
+a new chain under a new pair key.
 
 ### Not in the frontend
 
@@ -130,9 +128,9 @@ public exposure (§2).
   interlock must be minimal, so the next step is that a follow-up turn sends
   only the appended tokens. The frontend keeps a context index: after each
   transaction it records, by content hash, the token context compute now holds
-  (request plus response) under that transaction's position. A new request
-  whose tokens begin with a recorded context is sent as the suffix only,
-  referencing that position; otherwise in full. If compute has evicted a
+  (request plus response) under the ID of the transaction's last packet. A new
+  request whose tokens begin with a recorded context is sent as the suffix
+  only, referencing that ID; otherwise in full. If compute has evicted a
   referenced context it says so with a marker inside the encrypted payload and
   the frontend resends in full. The chat template must be prefix-stable
   across turns, one test per served model.
@@ -148,15 +146,15 @@ to right, responses right to left through the same stages. The token ids that
 come out of crypto are exactly what the tokenizer would have handed vLLM in a
 normal stack; the interlock path is inserted into that line.
 
-![Compute pipeline, both directions: the dispatcher turns positioned packets into messages and back; crypto decrypts requests and encrypts responses; vLLM consumes and produces token ids.](fig-compute-pipeline.svg)
+![Compute pipeline, both directions: the dispatcher turns packets into messages and back; crypto decrypts requests and encrypts responses; vLLM consumes and produces token ids.](fig-compute-pipeline.svg)
 
 ### Stages
 
 | Stage | Standard or custom | Does |
 |---|---|---|
 | **vLLM** | standard | The engine, in-process: model loading, tensor parallelism across the GPUs, continuous batching across concurrent requests, KV cache and prefix caching. Takes token-id prompts and the generation parameters carried in the payload, returns token ids that go back down the same chain. No HTTP server and no tokenizer on this node. The call into it and the reply out of it are a few lines of plumbing, as on the frontend. |
-| **Crypto** | standard cipher | Decrypts requests and encrypts responses under the chain key (Appendix A). |
-| **Dispatcher** | custom | Reassembles requests from positioned packets; packetizes responses into egress positions in order and sends them in their bucket windows; later the bucket sync against the interlock's feedback on this port. |
+| **Crypto** | standard cipher | Finds a request's pair key by the commitment in its header, reassembles and decrypts the request, and encrypts the response under the same key. |
+| **Dispatcher** | custom | Stamps response packets with outbound IDs, in a bucket later than the request they reference, and sends them in their bucket, tracking the interlock's clock from the sync feedback on this port. |
 | **Log** | custom | Exact bytes both directions. The protocol's prover log lives on the frontend; this copy is for debugging and for diffing hashes against the software interlock and the FPGA. |
 | **Wire** | config | TCP tunnel now, tap device later (§6). |
 
@@ -172,8 +170,8 @@ memory is in reach afterwards. Weights are pulled once to the shared home
 ### Drops
 
 The interlock drops late or out-of-order response packets the same way as
-requests, burning the position. The dispatcher reschedules; if the frontend
-has already timed out, it re-issues the request.
+requests; the sync feedback tells compute. The frontend, getting no answer,
+re-issues the request under a new pair key and compute answers that one.
 
 ### Not on compute
 
@@ -182,9 +180,9 @@ The node sees only encrypted token messages and the engine.
 
 ### Later
 
-- **Context store.** Keyed by the transaction's position: the token context
-  compute holds after each transaction (request plus response). A follow-up
-  turn arrives as a suffix referencing that position; the engine runs on
+- **Context store.** Keyed by the ID of the transaction's last packet: the
+  token context compute holds after each transaction (request plus response).
+  A follow-up turn arrives as a suffix referencing that ID; the engine runs on
   stored context plus suffix, where the prefix cache makes it cheap. The
   stored tokens are the authoritative state, the KV cache only an accelerator.
   A reference to an evicted context is answered with a marker inside the
@@ -251,10 +249,10 @@ protocol change), or the hypervisor must accept frames for the forced address.
 | Phase | Deliverable | Wire | Estimate | Status |
 |---|---|---|---|---|
 | 0 | environment on the shared home, vLLM with a small model on the compute node, outbound internet confirmed, Hetzner proxy + reverse tunnel | — | ½ day | done 2026-10-27 |
-| 1 | packet format and key handling with byte-exact tests against the chosen wire format (Appendix A) | — | 1 day | — |
-| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | — |
+| 1 | packet format and key handling with byte-exact tests against `verification-protocol.md` | — | 1 day | done 2026-10-28 |
+| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | done locally with a mock engine 2026-10-28; cluster run pending |
 | 2b | context reuse: context index on the frontend, context store on compute, suffix-only turns | tcp | 1–2 days | — |
-| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | — |
+| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | done locally 2026-10-28, verifier CLI not yet on Hetzner; cluster run pending |
 | 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day | waiting for the admins |
 | 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed | — |
 
