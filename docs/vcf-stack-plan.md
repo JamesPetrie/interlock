@@ -25,8 +25,8 @@ the traffic until the FPGA is installed between the two nodes.
 | Machine | Role | Standard software | Custom software |
 |---|---|---|---|
 | Hetzner box | public ingress | reverse proxy (Caddy or nginx) for TLS, sshd as tunnel endpoint | none, config only |
-| `h100-nvl-1-0-cc` | prover frontend | FastAPI + uvicorn (HTTP), HuggingFace tokenizers (chat template, encode/decode), request encryption, response decryption | dispatcher, log |
-| `h100-sxm-8-0` | prover compute | vLLM engine with tensor parallelism, model weights, request decryption, response encryption | dispatcher, log |
+| `h100-nvl-1-0-cc` | prover frontend | FastAPI + uvicorn (HTTP), HuggingFace tokenizers (chat template, encode/decode), request encryption, response decryption | dispatcher and release step, log |
+| `h100-sxm-8-0` | prover compute | vLLM engine with tensor parallelism, model weights, request decryption, response encryption | dispatcher and release step, log |
 
 Note: the verifier role is also done by the Hetzner box.
 
@@ -105,6 +105,7 @@ responses right to left through the same stages.
 | **Tokenizer** | standard (HuggingFace) | Chat template and encode on the way in, decode on the way out, `usage` counts. |
 | **Crypto** | standard cipher | Encrypts each request under a fresh pair key, committed in the request's headers, and decrypts the response under the same key. Reassembles a response from its packets, since where a message ends is written inside the encrypted payload. Last stage that sees plaintext. |
 | **Dispatcher** | custom | Payloads in, packets out. Stamps each packet of a chain with its ID, the bucket the interlock will be in when the packet arrives (tracked from the sync feedback) and the next slot, links it by reference and sends it in its bucket; on receive, hands packets over in order and reports the ones the sync reveals as dropped. Capacity is slots per bucket times bucket rate. Later holds the context index. Crypto above it never sees a packet; the wire below it never sees a message. |
+| **Release** | custom (process) or config (kernel, NIC) | Puts each built bucket on the wire at the instant the dispatcher picked, frames in order; send direction only. |
 | **Log** | custom | The exact bytes by ID, both directions, every certificate and the key material, kept for the challenge window. Audits each certificate against the log on arrival. |
 | **Wire** | config | TCP tunnel now, tap device later (§6). Nothing above it knows which is in use. |
 
@@ -155,6 +156,7 @@ normal stack; the interlock path is inserted into that line.
 | **vLLM** | standard | The engine, in-process: model loading, tensor parallelism across the GPUs, continuous batching across concurrent requests, KV cache and prefix caching. Takes token-id prompts and the generation parameters carried in the payload, returns token ids that go back down the same chain. No HTTP server and no tokenizer on this node. The call into it and the reply out of it are a few lines of plumbing, as on the frontend. |
 | **Crypto** | standard cipher | Finds a request's pair key by the commitment in its header, reassembles and decrypts the request, and encrypts the response under the same key. |
 | **Dispatcher** | custom | Stamps response packets with outbound IDs, in a bucket later than the request they reference, and sends them in their bucket, tracking the interlock's clock from the sync feedback on this port. |
+| **Release** | custom (process) or config (kernel, NIC) | Puts each built bucket on the wire at the instant the dispatcher picked, frames in order; send direction only. |
 | **Log** | custom | Exact bytes both directions. The protocol's prover log lives on the frontend; this copy is for debugging and for diffing hashes against the software interlock and the FPGA. |
 | **Wire** | config | TCP tunnel now, tap device later (§6). |
 
@@ -205,6 +207,18 @@ software interlock, and the verifier. New work: the packet format, the
 dispatcher, the HTTP frontend, a real serving engine, and the raw-ethernet
 wire.
 
+Status 2026-10-29: `stack/` (package `ilstack`, 61 tests) runs the whole
+path three ways. Through the FPGA on as10 (frontend on the client port,
+compute on the server port, kernel release, raw frames): 300 sequential
+40 KB requests and 32 concurrent ones answered with zero retries, losses or
+timeouts, 26 certificates valid under the FPGA's key and matching the log,
+the verifier's anchor and 400 of 400 openings verified (5 inside packets).
+On the cluster with the software interlock as the stand-in and the pacer
+process (10 ms buckets): the same flow through the public ingress, and with
+vLLM serving Qwen2.5-0.5B-Instruct on one H100, real answers in 400-700 ms
+end to end from a terminal (`stack/deploy/chat.sh`). The scripts for all of
+it are in `stack/deploy/`.
+
 ## 6. Raw frames without root: tap device + tc redirect
 
 The protocol needs plain 802.3 LENGTH frames on the wire, which normally
@@ -239,6 +253,12 @@ so is unreliable behind a hypervisor. The admins were asked for this on
 2026-10-27; a raw-frame ping probe is already staged on the cluster to run
 once the tap exists.
 
+The release step on the cluster is the pacer process. It times each bucket
+itself, so the tap needs nothing more: the default queue passes the frames
+through at once, in order. What it needs is real-time priority for our
+process (and a core of its own). The kernel release needs a raw socket and
+a timed transmit queue on the NIC.
+
 Consequence for the real deployment: the FPGA currently forces the
 destination MAC to a hardcoded constant. With a VM as compute node that
 constant must become the VM's actual NIC MAC (a gateware constant, not a
@@ -250,11 +270,12 @@ protocol change), or the hypervisor must accept frames for the forced address.
 |---|---|---|---|---|
 | 0 | environment on the shared home, vLLM with a small model on the compute node, outbound internet confirmed, Hetzner proxy + reverse tunnel | — | ½ day | done 2026-10-27 |
 | 1 | packet format and key handling with byte-exact tests against `verification-protocol.md` | — | 1 day | done 2026-10-28 |
-| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | done locally with a mock engine 2026-10-28; cluster run pending |
+| 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | done on the cluster 2026-10-29, with vLLM on one GPU (a large model is a parameter) |
 | 2b | context reuse: context index on the frontend, context store on compute, suffix-only turns | tcp | 1–2 days | — |
-| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | done locally 2026-10-28, verifier CLI not yet on Hetzner; cluster run pending |
-| 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day | waiting for the admins |
-| 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed | — |
+| 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | done on the cluster 2026-10-29 (the verifier CLI runs from the login node or anywhere with `mac.key`; not installed on Hetzner) |
+| 3b | the sender at 1 ms buckets: the pacer process, then the kernel release | raw | 2 days | done on as10 2026-10-29: the pacer process at the FPGA's rate (zero loss over an hour); the kernel release 1.2e-6 over an hour, lost in episodes of system activity on the kernel timer's core, isolation of that core untested |
+| 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day | waiting for the admins (and real-time priority for the pacer process, §6) |
+| 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed | done on as10 2026-10-29 with the full stack (certificates recompute from the log, tags verify under the FPGA's key); on the cluster when the FPGA arrives |
 
 Each phase runs as a long-lived Slurm batch job per node, resubmitted when
 the time limit hits, with the processes talking over the cluster network.

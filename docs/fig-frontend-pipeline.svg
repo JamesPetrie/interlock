@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="830" height="190" viewBox="0 0 830 190" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="940" height="190" viewBox="0 0 940 190" font-family="Helvetica, Arial, sans-serif">
   <defs>
     <marker id="arr" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto-start-reverse">
       <polygon points="0 0, 9 3.5, 0 7" fill="#333"/>
     </marker>
   </defs>
-  <rect width="830" height="190" fill="#ffffff"/>
+  <rect width="940" height="190" fill="#ffffff"/>
 
   <!-- zones -->
   <path d="M 20 60 H 383 V 170 H 20 A 10 10 0 0 1 10 160 V 70 A 10 10 0 0 1 20 60 Z" fill="#fef3e2" stroke="none"/>
@@ -22,8 +22,10 @@
     <text x="383" y="130" fill="#333">Crypto</text>
     <rect x="482" y="100" width="130" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
     <text x="547" y="130" fill="#333">Dispatcher</text>
-    <rect x="656" y="100" width="70" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8" stroke-dasharray="5 4"/>
-    <text x="691" y="130" fill="#333">Log</text>
+    <rect x="656" y="90" width="90" height="40" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8"/>
+    <text x="701" y="115" fill="#333">Release</text>
+    <rect x="790" y="100" width="70" height="50" rx="7" fill="#ffffff" stroke="#555" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <text x="825" y="130" fill="#333">Log</text>
   </g>
 
   <!-- bidirectional arrows -->
@@ -31,8 +33,13 @@
     <line x1="134" y1="125" x2="170" y2="125"/>
     <line x1="288" y1="125" x2="324" y2="125"/>
     <line x1="442" y1="125" x2="478" y2="125"/>
-    <line x1="616" y1="125" x2="652" y2="125"/>
-    <line x1="730" y1="125" x2="772" y2="125"/>
+    <line x1="864" y1="125" x2="906" y2="125"/>
   </g>
-  <text x="780" y="129" font-size="13" fill="#333">wire</text>
+  <!-- send direction through Release into the log, receive direction from the log straight back -->
+  <g stroke="#333" stroke-width="2" marker-end="url(#arr)">
+    <line x1="616" y1="110" x2="652" y2="110"/>
+    <line x1="750" y1="110" x2="786" y2="110"/>
+    <line x1="786" y1="143" x2="616" y2="143"/>
+  </g>
+  <text x="914" y="129" font-size="13" fill="#333">wire</text>
 </svg>
