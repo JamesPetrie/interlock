@@ -7,7 +7,7 @@ from ilstack import packet as P
 from ilstack.dispatcher import ProcessDispatcher
 from ilstack.interlock import RealTicker, SoftwareInterlock
 from ilstack.log import MemoryLog
-from ilstack.links import PacketFramer
+from ilstack.links import PacketFramer, etf_lead
 from ilstack.pacer import Framer, decode_bucket, decode_ids, encode_bucket, encode_ids, frame, id_of
 from ilstack.wire import TcpServerWire
 
@@ -31,6 +31,15 @@ def test_framing_roundtrips():
     assert pf.feed(raws[0][:10]) == [] and pf.feed(raws[0][10:] + raws[1] + bytes(64)[:7]) == raws
     cert = P.Certificate(6, 0, 0, 10, bytes(16), bytes(32), bytes(32), bytes(32)).packet()
     assert pf.feed(cert[7:]) == [cert]
+
+
+def test_etf_lead_from_tc():
+    """An etf root queue in software mode sends its delta early; offloaded, or any other queue, at the stamp."""
+    soft = "qdisc etf 8031: root refcnt 761 clockid TAI delta 300000 offload off deadline_mode off skip_sock_check off\n"
+    assert abs(etf_lead(soft) - 300e-6) < 1e-12
+    assert etf_lead(soft.replace("offload off", "offload on")) == 0.0
+    assert etf_lead("qdisc mq 0: root \nqdisc fq_codel 0: parent :3f limit 10240p flows 1024 quantum 1514\n") == 0.0
+    assert etf_lead("") == 0.0
 
 
 def test_bucket_builder():

@@ -7,8 +7,10 @@ hold the buckets parked there.
 from __future__ import annotations
 
 import os
+import re
 import socket
 import struct
+import subprocess
 import time
 
 from . import packet as P
@@ -19,6 +21,25 @@ CLOCK_MONOTONIC, CLOCK_TAI = 1, 11
 SO_SNDBUFFORCE = 32            # Linux: a send buffer beyond wmem_max, for a privileged socket
 MAC_FE = bytes([0x02, 0, 0, 0, 0, 0x01])      # the frontend's address on the raw link
 MAC_CP = bytes([0x02, 0, 0, 0, 0, 0x02])      # compute's
+
+
+def queue_lead(iface: str) -> float:
+    """How long before its stamp the interface's queue hands a frame to the
+    NIC, in seconds. An `etf` root queue in software mode wakes its delta
+    ahead of the stamp (its allowance for timer latency) and sends at once,
+    so the frame leaves up to the delta early; offloaded, the NIC holds it
+    to the stamp; `fq` releases at the stamp. 0 if `tc` cannot tell."""
+    try:
+        out = subprocess.run(["tc", "qdisc", "show", "dev", iface], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0.0
+    return etf_lead(out)
+
+
+def etf_lead(tc_output: str) -> float:
+    """`queue_lead` from the text of `tc qdisc show dev <if>`."""
+    m = re.search(r"^qdisc etf \S+ root .*?\bdelta (\d+) offload (on|off)", tc_output, re.M)
+    return int(m.group(1)) * 1e-9 if m and m.group(2) == "off" else 0.0
 
 
 

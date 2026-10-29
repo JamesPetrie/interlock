@@ -182,7 +182,7 @@ async def run_send(host: str, port: int, params: P.Params, slots: int, buckets: 
     from .clock import SyncClock
     from .dispatcher import Dispatcher, ProcessDispatcher
     from .log import RingLog
-    from .links import CLOCK_TAI
+    from .links import CLOCK_TAI, queue_lead
     from .runtime import quiet_collector
     from .verifier import audit
     from .wire import RawWire
@@ -197,9 +197,11 @@ async def run_send(host: str, port: int, params: P.Params, slots: int, buckets: 
         quiet_collector()                                        # this process hands over on a deadline: no long GC pauses
         wire = RawWire(host[4:], P.INBOUND, CLOCK_TAI)                 # the etf queue's clock, offloaded or not
         offset = time.clock_gettime(time.CLOCK_TAI) - time.monotonic()
+        lead = queue_lead(host[4:])
+        print(f"{release} release on {host[4:]}: the queue sends {lead * 1e6:.0f} us before the stamp", file=sys.stderr, flush=True)
         d = Dispatcher(params, wire, SyncClock(params.bucket_ms, target=target, fill=fill, delta_unit=delta_unit),
                        log, P.INBOUND, max_slots=slots, link_mbps=link_mbps, release=release, ahead=ahead,
-                       rate_limit=rate_limit, tai_offset=offset)
+                       rate_limit=rate_limit, tai_offset=offset, lead=lead)
     else:
         raise ValueError(f"unknown release {release!r}")
     audits = {"certificates": 0, "matching": 0, "device": None}

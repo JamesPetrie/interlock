@@ -62,13 +62,15 @@ async def _dispatcher(a, params, store, direction):
                                  target=a.target, pace=a.rate_limit, delta_unit=a.delta_unit, fill=a.fill)
     if not a.interlock.startswith("raw:"):
         raise SystemExit("kernel and hardware release need a raw link: --interlock raw:<iface>")
-    from .links import CLOCK_TAI
+    from .links import CLOCK_TAI, queue_lead
     from .wire import RawWire
     quiet_collector()
     wire = RawWire(a.interlock[4:], direction, CLOCK_TAI)                 # the etf queue's clock, offloaded or not
     offset = time.clock_gettime(time.CLOCK_TAI) - time.monotonic()
+    lead = queue_lead(a.interlock[4:])
+    log.info("%s release on %s: the queue sends %.0f us before the stamp", a.release, a.interlock[4:], lead * 1e6)
     return Dispatcher(params, wire, _clock(a), store, direction, max_slots=a.slots, link_mbps=a.link_mbps,
-                      release=a.release, ahead=a.ahead, rate_limit=a.rate_limit, tai_offset=offset)
+                      release=a.release, ahead=a.ahead, rate_limit=a.rate_limit, tai_offset=offset, lead=lead)
 
 
 def _hostport(s: str) -> tuple[str, int]:

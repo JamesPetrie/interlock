@@ -194,6 +194,11 @@ def test_kernel_release_stamps_and_hands_over_whole_buckets():
         stamps = wire2.buckets[0][1]
         assert isinstance(stamps, list) and len(stamps) == 4
         assert abs((stamps[1] - stamps[0]) - 1538 * 8 / 1e9) < 1e-7
+        wire3 = StampWire()                                           # a queue that sends 300 us early: stamped that much later
+        d3 = Dispatcher(P.Params(), wire3, ManualClock(10), MemoryLog(), P.INBOUND, max_slots=4, link_mbps=1000.0,
+                        release="kernel", ahead=3, rate_limit=True, lead=300e-6)
+        d3.send([bytes(100)] * 4, bytes(range(32)))
+        assert all(abs(b - a - 300e-6) < 1e-4 for a, b in zip(stamps, wire3.buckets[0][1]))
         # a bucket whose instant has passed is dropped and reported
         events = []
         d2.event_listeners.append(events.append)

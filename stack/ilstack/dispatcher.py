@@ -166,7 +166,7 @@ class BucketBuilder:
 
 
 BOOTSTRAP_GRACE = 1e-3         # kernel/hardware release, before the clock is locked: a bucket's departure is at least this far ahead
-                               # (more than an etf queue's delta, or it would be refused)
+                               # (more than an etf queue's delta, or it would send at once)
 
 
 class Dispatcher:
@@ -182,14 +182,19 @@ class Dispatcher:
     frames; the queue must keep a bucket's order (`etf` does; `fq` only with
     a quantum covering a bucket). With `rate_limit`, every frame carries its
     own time, the instant plus its wire time at `link_mbps`: a bench with a
-    link faster than the device behind it. For the pacer process,
-    `rate_limit` means frame by frame at the wire time."""
+    link faster than the device behind it. `lead` is how early the queue
+    sends a frame before its stamp (an `etf` queue in software mode: its
+    delta, see `links.queue_lead`); the stamps are that much later, so a
+    frame leaves at its instant, which is what the clock assumes until its
+    first lock. For the pacer process, `rate_limit` means frame by frame at
+    the wire time."""
 
     def __init__(self, params: P.Params, wire: Wire | None, clock: Clock | None, log: Log, direction: int,
                  max_slots: int | None = None, link_mbps: float = 1000.0, release: str = "loop", ahead: int = 2,
-                 rate_limit: bool = False, tai_offset: float = 0.0):
+                 rate_limit: bool = False, tai_offset: float = 0.0, lead: float = 0.0):
         self.params, self.wire, self.clock, self.log, self.direction = params, wire, clock, log, direction
         self.release, self.ahead, self.rate_limit, self.tai_offset = release, ahead, rate_limit, tai_offset
+        self.stamp_offset = tai_offset + lead                     # a departure time, monotonic, to the queue's stamp
         self.pace = WIRE_BYTES * 8 / link_mbps / 1e6 if link_mbps else 0.0
         self.event_listeners: list[Callable[[dict], None]] = []
         self.builder = BucketBuilder(params, direction, self._now_bucket, max_slots, link_mbps)
@@ -276,7 +281,7 @@ class Dispatcher:
             self._drop(ids)
             return
         leave = [due + i * self.pace for i in range(len(raws))]           # when each frame is on the wire
-        when = [t + self.tai_offset for t in leave] if self.rate_limit else due + self.tai_offset
+        when = [t + self.stamp_offset for t in leave] if self.rate_limit else due + self.stamp_offset
         try:
             self.wire.send_bucket(raws, when)
         except OSError as e:

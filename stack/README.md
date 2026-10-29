@@ -62,7 +62,9 @@ releases a bucket at its instant is `--release`:
   time-aware queue or root (the cluster today).
 - `kernel`: the dispatcher stamps each bucket with its instant (CLOCK_TAI)
   and hands it to the kernel `ahead` buckets early; an `etf` queue on the
-  interface releases it from a kernel timer. Needs a raw link and, once,
+  interface releases it from a kernel timer (in software mode up to its
+  `delta` early, so the dispatcher reads the delta and stamps that much
+  later). Needs a raw link and, once,
   `tc qdisc replace dev <if> root etf clockid CLOCK_TAI delta 300000` (`fq`
   reorders a bucket's shorter frames; with it use `quantum 100000`).
   `--rate-limit` stamps every frame a wire time apart, for a link faster
