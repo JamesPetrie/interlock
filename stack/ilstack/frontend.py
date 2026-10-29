@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import messages as M, packet as P
 from .assembly import Assembler, encrypt

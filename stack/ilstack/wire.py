@@ -57,6 +57,13 @@ class MemoryWire(Wire):
         await self._out.put(None)
 
 
+def _no_backpressure(writer: asyncio.StreamWriter) -> None:
+    """A wire's sender must never wait on the receiver: a port task that
+    blocks in drain() while the other side is blocked the same way is a
+    deadlock. Let the write buffer grow instead."""
+    writer.transport.set_write_buffer_limits(high=1 << 26)
+
+
 async def _read_packet(reader: asyncio.StreamReader) -> bytes:
     head = await reader.readexactly(8)
     return head + await reader.readexactly(frame_length(head) - 8)
@@ -68,6 +75,7 @@ class TcpWire(Wire):
 
     def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         self._r, self._w = reader, writer
+        _no_backpressure(writer)
 
     @classmethod
     async def connect(cls, host: str, port: int, retries: int = 50, delay: float = 0.2) -> "TcpWire":
@@ -127,6 +135,7 @@ class TcpServerWire(Wire):
     async def _on_conn(self, r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
         if self._w is not None:
             self._w.close()
+        _no_backpressure(w)
         self._r, self._w = r, w
         self.connections += 1
         self._connected.set()
@@ -160,3 +169,45 @@ class TcpServerWire(Wire):
         self._drop_client()
         if self._server is not None:
             self._server.close()
+
+
+class RawWire(Wire):
+    """The FPGA's wire inside the event loop: raw 802.3 frames on an
+    interface (see `pacer.RawLink`), received through the loop's reader,
+    and whole buckets sent in one call with departure times for the
+    interface's queue to honour (`send_bucket`)."""
+
+    def __init__(self, iface: str, direction: int, clockid: int | None = None):
+        from .links import RawLink
+        self.link = RawLink(iface, direction)
+        if clockid is not None:
+            self.link.departure_times(clockid)
+        self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._loop = asyncio.get_event_loop()
+        self._loop.add_reader(self.link.fileno(), self._readable)
+
+    def _readable(self) -> None:
+        packets = self.link.recv_packets()
+        if packets is None:
+            self._queue.put_nowait(None)
+            return
+        for raw in packets:
+            self._queue.put_nowait(raw)
+
+    async def send(self, packet: bytes) -> None:
+        self.link.send(packet)
+
+    def send_bucket(self, frames: list[bytes], when: float | list[float] | None) -> None:
+        """One call for the bucket; `when`: its departure time (monotonic
+        seconds, or the clock given at construction), or one per frame."""
+        self.link.send_many(frames, when)
+
+    async def recv(self) -> bytes:
+        raw = await self._queue.get()
+        if raw is None:
+            raise WireClosed()
+        return raw
+
+    async def close(self) -> None:
+        self._loop.remove_reader(self.link.fileno())
+        self.link.sock.close()

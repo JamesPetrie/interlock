@@ -84,7 +84,8 @@ def create_app(frontend: Frontend, tokenizer: Tokenizer, model_name: str,
     async def health():
         d = frontend.dispatcher
         return {"status": "ok", "frontend": vars(frontend.stats), "dispatcher": vars(d.stats),
-                "assembler": vars(frontend.assembler.stats), "certificates": len(frontend.log.certificates)}
+                "clock": d.clock_stats(), "builder": d.builder_stats(), "assembler": vars(frontend.assembler.stats),
+                "certificates": len(frontend.log.certificates)}
 
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models():

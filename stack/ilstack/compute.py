@@ -5,12 +5,15 @@ request's key by its KEY_COMMIT. A complete request is decoded and handed
 to the engine; the response is encoded, encrypted under the same pair key
 in the outbound direction, and sent referencing the request's last packet.
 Requests run concurrently up to a limit; anything that fails to decode gets
-an error response so the frontend does not wait for a timeout.
+an error response so the frontend does not wait for a timeout. A response
+the interlock dropped (the sync says so) is sent again under new IDs, once,
+so that a lost response costs a bucket rather than the frontend's timeout.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from . import messages as M, packet as P
@@ -28,6 +31,7 @@ class ComputeStats:
     responses: int = 0
     errors: int = 0
     lost_responses: int = 0
+    resent: int = 0
 
 
 class ComputeNode:
@@ -37,6 +41,8 @@ class ComputeNode:
         self.stats = ComputeStats()
         self.assembler = Assembler(P.INBOUND, self._key_for)
         self._limit = asyncio.Semaphore(concurrency)
+        self._recent: OrderedDict[P.Id, tuple[list[bytes], P.Id]] = OrderedDict()   # request first ID -> (payloads, reference)
+        self._resent: set[P.Id] = set()
         self._tasks: list[asyncio.Task] = []
         self._jobs: set[asyncio.Task] = set()
 
@@ -79,12 +85,23 @@ class ComputeNode:
                 log.warning("request %s failed: %s", msg.first, e)
                 self.stats.errors += 1
                 resp = M.Response([], "error", str(e)[:200])
-        self.dispatcher.send(encrypt(msg.key, P.OUTBOUND, M.encode(resp), self.params.s_max),
-                             reference=msg.last, tag=msg.first)
+        payloads = encrypt(msg.key, P.OUTBOUND, M.encode(resp), self.params.s_max)
+        self._recent[msg.first] = (payloads, msg.last)
+        while len(self._recent) > 1000:
+            old, _ = self._recent.popitem(last=False)
+            self._resent.discard(old)
+        self.dispatcher.send(payloads, reference=msg.last, tag=msg.first)
         self.stats.responses += 1
 
     async def _losses(self) -> None:
         while True:
             id, tag = await self.dispatcher.lost.get()
             self.stats.lost_responses += 1
-            log.info("response packet %s for request %s was dropped; the frontend will ask again", id, tag)
+            if tag in self._recent and tag not in self._resent:
+                self._resent.add(tag)
+                payloads, reference = self._recent[tag]
+                self.dispatcher.send(payloads, reference=reference, tag=tag)
+                self.stats.resent += 1
+                log.info("response packet %s for request %s was dropped; sending the response again", id, tag)
+            else:
+                log.info("response packet %s for request %s was dropped; the frontend will ask again", id, tag)

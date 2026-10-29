@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 
 from ilstack import packet as P

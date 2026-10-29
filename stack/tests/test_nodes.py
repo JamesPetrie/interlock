@@ -40,13 +40,31 @@ def test_lost_request_is_sent_again():
     run(main())
 
 
+def test_lost_response_is_sent_again_by_compute():
+    async def main():
+        async with Stack() as s:
+            once = [True]
+
+            def drop_first_response(raw):
+                if once[0] and raw[4:8] == b"\x00\x00\x00\x0F":
+                    once[0] = False
+                    return True
+                return False
+            s.co_wire.drop = drop_first_response
+            resp = await s.fe.complete([1, 2, 3], {"max_tokens": 4})
+            assert resp == M.Response([3, 2, 1], "stop")
+            assert s.co.stats.lost_responses == 1 and s.co.stats.resent == 1
+            assert s.fe.stats.retries == 0 and s.fe.stats.timeouts == 0 and s.co.stats.requests == 1
+    run(main())
+
+
 def test_no_answer_gives_an_error_response():
     async def main():
         async with Stack(timeout=0.3, retries=1) as s:
             s.co_wire.drop = lambda raw: raw[4:8] == b"\x00\x00\x00\x0F"      # every response is lost
             resp = await s.fe.complete([1, 2, 3], {"max_tokens": 4})
             assert resp.finish_reason == "error" and s.fe.stats.failures == 1
-            assert s.fe.stats.lost + s.fe.stats.timeouts == 2 and s.co.stats.lost_responses == 2
+            assert s.fe.stats.lost + s.fe.stats.timeouts == 2 and s.co.stats.lost_responses >= 2
     run(main())
 
 

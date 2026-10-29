@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -27,6 +29,16 @@ from . import packet as P
 from .wire import Wire, WireClosed
 
 log = logging.getLogger(__name__)
+
+
+def _trace_file():
+    """ILSTACK_TRACE=<path>: per-packet trace lines go there (use local disk;
+    a synchronous write to a network filesystem stalls the loop for
+    milliseconds). ILSTACK_TRACE=1 means stderr."""
+    path = os.environ.get("ILSTACK_TRACE", "")
+    if not path:
+        return None
+    return sys.stderr if path == "1" else open(path, "a", buffering=1 << 16)
 
 
 class Ticker:
@@ -97,6 +109,7 @@ class SoftwareInterlock:
         self._buckets: dict[tuple[int, int], _Bucket] = defaultdict(_Bucket)    # (direction, bucket)
         self._digests: dict[int, list[bytes]] = {d: [] for d in P.DIRECTIONS}  # the open certificate interval
         self._tasks: list[asyncio.Task] = []
+        self._trace = _trace_file()                                # per-packet timestamps, for diagnosis
 
     async def start(self) -> None:
         self._tasks = [asyncio.create_task(self._port(d)) for d in P.DIRECTIONS]
@@ -160,15 +173,17 @@ class SoftwareInterlock:
             return self._drop(c, "units", direction, f"PLD_LEN {len(pkt.payload)}")
         if b.first_slot == P.NO_SLOT:
             b.first_slot, b.delta = pkt.id.slot, self.ticker.delta(now)
+        if self._trace:
+            print(f"TRACE check {pkt.id.pack()} {time.monotonic():.6f} {self.ticker.delta(now)}", file=self._trace)
         b.last_slot = pkt.id.slot
         b.records.append(pkt.record)
         c.accepted += 1
         return pkt
 
-    @staticmethod
-    def _drop(c: Counters, rule: str, direction: int, detail: str) -> None:
+    def _drop(self, c: Counters, rule: str, direction: int, detail: str) -> None:
         c.dropped[rule] += 1
-        log.info("drop %s on %s: %s", rule, "inbound" if direction == P.INBOUND else "outbound", detail)
+        if self._trace:
+            print(f"TRACE drop {rule} {'inbound' if direction == P.INBOUND else 'outbound'}: {detail}", file=self._trace)
         return None
 
     # --- buckets and certificates --------------------------------------------
@@ -184,6 +199,8 @@ class SoftwareInterlock:
         for d in P.DIRECTIONS:
             b = self._buckets.pop((d, bucket), _Bucket())
             self._digests[d].append(P.bkt_digest(b.records))
+            if self._trace and os.environ.get("ILSTACK_TRACE_SYNCS"):
+                print(f"TRACE sync {d} {bucket} {time.monotonic():.6f}", file=self._trace)
             await self.wires[d].send(P.Sync(d, bucket, b.first_slot, b.delta).pack())
         if (bucket + 1) % self.params.bkt_num == 0:
             await self._certify(bucket + 1 - self.params.bkt_num)

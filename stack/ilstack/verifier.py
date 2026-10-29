@@ -132,14 +132,28 @@ def build_opening(params: P.Params, log: Log, direction: int, bucket: int, byte:
     return Opening(direction, bucket, byte, op, ref)
 
 
-def audit(params: P.Params, log: Log, cert: P.Certificate) -> dict:
+def audit(params: P.Params, log: Log, cert: P.Certificate, directions: tuple = P.DIRECTIONS) -> dict:
     """The prover's byte-audit of a certificate against its own log: does the
     log reproduce INWARD and OUTWARD? A mismatch means the interlock dropped
-    (or saw differently) a packet in that interval which the log still holds."""
+    (or saw differently) a packet in that interval which the log still holds.
+    `directions` limits the audit to one log when only that one is kept."""
     result = {}
+    digest_of: dict[bytes, bytes] = {}                             # payload digests, shared by identical payloads
     for name, direction in (("inward", P.INBOUND), ("outward", P.OUTBOUND)):
-        digests = [P.bkt_digest(P.parse(raw).record for raw in log.bucket(direction, b))
-                   for b in range(cert.bkt_start, cert.bkt_start + cert.bkt_num)]
+        if direction not in directions:
+            continue
+        digests = []
+        for b in range(cert.bkt_start, cert.bkt_start + cert.bkt_num):
+            records = log.records(direction, b)
+            if records is None:
+                records = []
+                for raw in log.bucket(direction, b):
+                    payload = raw[P.HEADER_SIZE:]
+                    pd = digest_of.get(payload)
+                    if pd is None:
+                        pd = digest_of[payload] = P.pld_digest(payload)
+                    records.append(P.record(len(payload), P.pkt_digest(raw[:P.HEADER_SIZE], pd)))
+            digests.append(P.bkt_digest(records))
         result[name] = P.cert_digest(digests) == getattr(cert, name)
     return result
 
@@ -180,13 +194,16 @@ class Verifier:
         return secrets.token_bytes(16)
 
     # 2. select
-    def select(self, window: int, direction: int = P.OUTBOUND) -> tuple[int, int, int]:
-        """(direction, bucket, byte): uniform over the last `window` certified buckets and the capacity."""
+    def select(self, window: int, direction: int = P.OUTBOUND, floor: int | None = None) -> tuple[int, int, int]:
+        """(direction, bucket, byte): uniform over the last `window` certified
+        buckets and the capacity. `floor`: the first bucket the prover holds
+        a certificate for (it keeps a bounded history); nothing older is
+        asked for."""
         if not self.anchors:
             raise RuntimeError("anchor first")
         latest = self.anchors[-1].certificate
         top = latest.bkt_start + latest.bkt_num - 1
-        low = max(0, top - window)
+        low = max(0, top - window, floor if floor is not None else 0)
         return direction, low + secrets.randbelow(top - low + 1), secrets.randbelow(self.params.capacity)
 
     # 5. verify

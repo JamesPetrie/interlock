@@ -74,7 +74,7 @@ class Link:
         await self.il.stop()
 
 
-async def make_link(params: P.Params = P.Params(), manual: bool = True, lead: int = 0) -> Link:
+async def make_link(params: P.Params = P.Params(), manual: bool = True) -> Link:
     fe_wire, il_fe = MemoryWire.pair()
     co_wire, il_co = MemoryWire.pair()
     if manual:
@@ -82,7 +82,7 @@ async def make_link(params: P.Params = P.Params(), manual: bool = True, lead: in
         clocks = (ManualClock(), ManualClock())
     else:
         ticker = RealTicker(params.bucket_ms)
-        clocks = (SyncClock(params.bucket_ms, lead=lead), SyncClock(params.bucket_ms, lead=lead))
+        clocks = (SyncClock(params.bucket_ms), SyncClock(params.bucket_ms))
     il = SoftwareInterlock(params, il_fe, il_co, MAC, ticker)
     fe = Dispatcher(params, fe_wire, clocks[0], MemoryLog(), P.INBOUND)
     co = Dispatcher(params, co_wire, clocks[1], MemoryLog(), P.OUTBOUND)
