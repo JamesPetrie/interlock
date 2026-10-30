@@ -230,7 +230,7 @@ module recomp_ilock_core
   wire         recomp_valid;
 
   batch_buffer #(
-    .GRACE_PERIOD (2000),  // matches prod's drop-gated ingress
+    .GRACE_PERIOD (3000),  // matches prod's drop-gated ingress
     .OUTPUT_SWAP  (1)
   ) buffer_chl (
     .clk      (clk),

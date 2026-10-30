@@ -242,7 +242,8 @@ module fabric_bridge
   wire [15:0]  req_tuser_o;
 
   batch_buffer #(
-    .GRACE_PERIOD(2000), // increased for the additional drop gate
+    // increased for pkt_gate (+2KB) and traffic_commit (~1.5B/cycle) in the path
+    .GRACE_PERIOD(3000), // 3.5K / 1.5 = 2333 with safety margin
     .OUTPUT_SWAP(0)
   ) buffer_req (
     .clk      (clk),

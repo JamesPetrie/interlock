@@ -10,8 +10,8 @@ module batch_buffer
   // Default 320 KB per bank (supports at most 2.5ms of full 1 GbE).
   parameter int unsigned BANK_WORDS    = (320 * 1024) / 4,
   // Grace period (time for last writes to finish after the tick)
-  // Max ~1.5KB packet with at least ~2B/cycle (hashing throughput)
-  parameter int unsigned GRACE_PERIOD  = 1_000, // with safety margin
+  // Max ~1.5KB packet with at least 4B/cycle
+  parameter int unsigned GRACE_PERIOD  = 512, // 375 with safety margin
   // Largest entry, in words
   parameter int unsigned MAX_ENTRY_WORDS = 1 + (eth_pkg::ETH_LEN_MAX + 3) / 4,
   // re-insert the empty swap beat on the output

@@ -2,10 +2,9 @@
 
 module axis_pkt_gate #(
   // FIFO depth in beats. POWER OF TWO (the pointer wrap relies on it).
-  // Must fit the packet being written on top of a committed max packet the
-  // drain is still replaying: two ETH_LEN_MAX packets = 2 x 375 words,
+  // Must fit a max packet being written: ETH_LEN_MAX packet = 375 words,
   // rounded up.
-  parameter int unsigned DEPTH_WORDS = 1024
+  parameter int unsigned DEPTH_WORDS = 512
 ) (
   input  wire        clk,
   input  wire        rst_n,
