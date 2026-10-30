@@ -7,8 +7,8 @@ from ilstack import packet as P
 from ilstack.dispatcher import ProcessDispatcher
 from ilstack.interlock import RealTicker, SoftwareInterlock
 from ilstack.log import MemoryLog
-from ilstack.links import PacketFramer, etf_lead
 from ilstack.pacer import Framer, decode_bucket, decode_ids, encode_bucket, encode_ids, frame, id_of
+from ilstack.links import PacketFramer, queue_problem
 from ilstack.wire import TcpServerWire
 
 KC = bytes(range(32))
@@ -33,13 +33,41 @@ def test_framing_roundtrips():
     assert pf.feed(cert[7:]) == [cert]
 
 
-def test_etf_lead_from_tc():
-    """An etf root queue in software mode sends its delta early; offloaded, or any other queue, at the stamp."""
-    soft = "qdisc etf 8031: root refcnt 761 clockid TAI delta 300000 offload off deadline_mode off skip_sock_check off\n"
-    assert abs(etf_lead(soft) - 300e-6) < 1e-12
-    assert etf_lead(soft.replace("offload off", "offload on")) == 0.0
-    assert etf_lead("qdisc mq 0: root \nqdisc fq_codel 0: parent :3f limit 10240p flows 1024 quantum 1514\n") == 0.0
-    assert etf_lead("") == 0.0
+def test_queue_check_from_tc():
+    """Kernel release: an fq root queue with a bucket's quantum, room for the parked buckets, one flow, no maxrate;
+    hardware: an offloaded etf. Otherwise the tc command that fixes it."""
+    fix = ("tc qdisc replace dev enp1s0np0 root fq quantum 100000 initial_quantum 100000 flow_limit 2000 limit 10000 "
+           "orphan_mask 0 timer_slack 1us")
+    good = ("qdisc fq 8001: root refcnt 2 limit 10000p flow_limit 2000p buckets 1024 orphan_mask 0 quantum 100000b "
+            "initial_quantum 100000b low_rate_threshold 550Kbit refill_delay 40ms timer_slack 1us horizon 10s horizon_drop\n")
+    assert queue_problem(good, "enp1s0np0", "kernel", 64, 10) is None
+    newer = good.replace("orphan_mask 0 ", "orphan_mask 0 bands 3 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1 weights 589824 196608 65536 ")
+    assert queue_problem(newer, "enp1s0np0", "kernel", 64, 10) is None                    # iproute2 >= 6.7 prints the bands
+    assert queue_problem(good.replace("root", "dev enp1s0np0 root"), "enp1s0np0", "kernel", 64, 10) is None
+    sizes = good.replace("quantum 100000b", "quantum 128Kb").replace("initial_quantum 128Kb", "initial_quantum 1Mb")
+    assert queue_problem(sizes, "enp1s0np0", "kernel", 64, 10) is None                    # tc's 1024-based units
+    hashed = queue_problem(good.replace("orphan_mask 0", "orphan_mask 1023"), "enp1s0np0", "kernel", 64, 10)
+    assert "orphan_mask 1023" in hashed and hashed.endswith("\n  " + fix)
+    default = ("qdisc fq 8002: root refcnt 2 limit 10000p flow_limit 100p buckets 1024 orphan_mask 1023 quantum 3028b "
+               "initial_quantum 15140b low_rate_threshold 550Kbit refill_delay 40ms timer_slack 10us horizon 10s horizon_drop\n")
+    p = queue_problem(default, "enp1s0np0", "kernel", 64, 10)
+    assert "quantum 3028 < 96896" in p and "initial_quantum 15140 < 96896" in p and "flow_limit 100 < 704" in p
+    assert "limit 10000" not in p.split("\n")[0]
+    assert "maxrate" in queue_problem(good.replace("low_rate", "maxrate 1Gbit low_rate"), "enp1s0np0", "kernel", 64, 10)
+    mq = ("qdisc mq 0: root \nqdisc fq_codel 0: parent :2 limit 10240p flows 1024 quantum 1514 target 5ms interval 100ms "
+          "memory_limit 32Mb ecn drop_batch 64 \nqdisc fq_codel 0: parent :1 limit 10240p flows 1024 quantum 1514 target 5ms "
+          "interval 100ms memory_limit 32Mb ecn drop_batch 64 \n")
+    assert queue_problem(mq, "enp1s0np0", "kernel", 64, 10) == f"kernel release on enp1s0np0: the root queue is mq, not fq. Set it with\n  {fix}"
+    assert "missing" in queue_problem("", "enp1s0np0", "kernel", 64, 10)
+    big = queue_problem(mq, "x", "kernel", 256, 10)                                    # the command sized to the need
+    assert "quantum 387584 initial_quantum 387584 flow_limit 2816 limit 10000" in big
+    etf = "qdisc etf 8031: root refcnt 761 clockid TAI delta 300000 offload off deadline_mode off skip_sock_check off\n"
+    assert "not fq" in queue_problem(etf, "enp1s0np0", "kernel", 64, 10)
+    assert queue_problem(etf.replace("offload off", "offload on"), "enp1s0np0", "hardware", 64, 10) is None
+    for q in (etf, mq, good):
+        assert queue_problem(q, "enp1s0np0", "hardware", 64, 10).endswith(
+            "\n  tc qdisc replace dev enp1s0np0 root etf clockid CLOCK_TAI delta 300000 offload")
+    assert queue_problem(mq, "enp1s0np0", "process", 64, 10) is None
 
 
 def test_bucket_builder():

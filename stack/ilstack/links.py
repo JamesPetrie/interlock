@@ -1,8 +1,8 @@
 """The links a sender puts packets on, outside the event loop: the TCP tunnel
 to a software interlock, and the FPGA's raw 802.3 LENGTH frames. Both take a
 whole bucket in one call; the raw link stamps departure times for a queue
-that honours them (`fq`, `etf`), and asks for a send buffer large enough to
-hold the buckets parked there.
+that honours them (`fq`, `etf` offloaded, see `check_queue`), and asks for a
+send buffer large enough to hold the buckets parked there.
 """
 from __future__ import annotations
 
@@ -23,23 +23,59 @@ MAC_FE = bytes([0x02, 0, 0, 0, 0, 0x01])      # the frontend's address on the ra
 MAC_CP = bytes([0x02, 0, 0, 0, 0, 0x02])      # compute's
 
 
-def queue_lead(iface: str) -> float:
-    """How long before its stamp the interface's queue hands a frame to the
-    NIC, in seconds. An `etf` root queue in software mode wakes its delta
-    ahead of the stamp (its allowance for timer latency) and sends at once,
-    so the frame leaves up to the delta early; offloaded, the NIC holds it
-    to the stamp; `fq` releases at the stamp. 0 if `tc` cannot tell."""
+FRAME_BYTES = 14 + P.FRAME_DATA                # the largest raw frame as a queue counts it: no preamble, FCS or gap
+# the kernel release's queue: a quantum and first credit covering a bucket, room for the buckets parked ahead, and
+# every frame of the socket one flow (fq hashes a raw socket's frames by their LENGTH field otherwise, so a shorter
+# frame is a flow of its own and overtakes wherever the full frames' credit runs out); never maxrate (paces, reorders)
+FQ = "fq quantum {q} initial_quantum {q} flow_limit {f} limit {l} orphan_mask 0 timer_slack 1us"
+ETF = "etf clockid CLOCK_TAI delta 300000 offload"   # the hardware release's: the NIC holds a frame to its launch time
+
+
+def check_queue(iface: str, release: str, slots: int, ahead: int) -> str | None:
+    """Why the interface's root queue cannot release buckets of up to
+    `slots` frames handed over `ahead` buckets early, with the `tc` command
+    that fixes it; None if it can. `kernel` needs `fq`, which holds a frame
+    to its stamp (CLOCK_MONOTONIC); `hardware` an `etf` offloaded to the NIC
+    (CLOCK_TAI). The default `fq_codel` ignores departure times: frames
+    handed over early would leave at once and be dropped."""
     try:
         out = subprocess.run(["tc", "qdisc", "show", "dev", iface], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
-        return 0.0
-    return etf_lead(out)
+        out = ""
+    return queue_problem(out, iface, release, slots, ahead)
 
 
-def etf_lead(tc_output: str) -> float:
-    """`queue_lead` from the text of `tc qdisc show dev <if>`."""
-    m = re.search(r"^qdisc etf \S+ root .*?\bdelta (\d+) offload (on|off)", tc_output, re.M)
-    return int(m.group(1)) * 1e-9 if m and m.group(2) == "off" else 0.0
+def queue_problem(tc_output: str, iface: str, release: str, slots: int, ahead: int) -> str | None:
+    """`check_queue` from the text of `tc qdisc show dev <if>`."""
+    m = re.search(r"^qdisc (\S+) \S+ (?:dev \S+ )?root\b(.*)$", tc_output, re.M)
+    kind, opts = (m.group(1), m.group(2)) if m else ("missing", "")
+
+    def value(key: str) -> int | None:                          # tc's sizes: 100000b, 128Kb, 1Mb; counts: 2000p
+        v = re.search(rf"(?<!\w){key} (\d+)([KMG]?)", opts)
+        return int(v.group(1)) * {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30}[v.group(2)] if v else None
+    if release == "kernel":
+        bucket, parked = slots * FRAME_BYTES, (ahead + 1) * slots   # the bucket on its way out and `ahead` behind it
+        fix = FQ.format(q=max(100000, bucket), f=max(2000, parked), l=max(10000, parked))
+        if kind != "fq":
+            why = [f"the root queue is {kind}, not fq"]
+        else:
+            why = [f"{k} {value(k)} < {n} ({what})" for k, n, what in
+                   (("quantum", bucket, "a bucket's bytes"), ("initial_quantum", bucket, "a bucket's bytes"),
+                    ("flow_limit", parked, "frames parked ahead"), ("limit", parked, "frames parked ahead"))
+                   if (value(k) or 0) < n]
+            if value("orphan_mask") != 0:
+                why.append(f"orphan_mask {value('orphan_mask')}, not 0 (a bucket's frames in one flow, in order)")
+            if re.search(r"(?<!\w)maxrate ", opts):
+                why.append("maxrate set (fq's pacing reorders)")
+    elif release == "hardware":
+        fix = ETF
+        ok = kind == "etf" and re.search(r"(?<!\w)clockid TAI\b", opts) and re.search(r"(?<!\w)offload on\b", opts)
+        why = [] if ok else [f"the root queue is {kind}, not etf with clockid TAI and offload on"]
+    else:
+        return None
+    if not why:
+        return None
+    return f"{release} release on {iface}: {'; '.join(why)}. Set it with\n  tc qdisc replace dev {iface} root {fix}"
 
 
 
@@ -138,20 +174,20 @@ class RawLink:
             except BlockingIOError:
                 pass
 
-    def departure_times(self, clockid: int = CLOCK_TAI) -> None:
+    def departure_times(self, clockid: int = CLOCK_MONOTONIC) -> None:
         """Let the interface's queue release each frame at the time stamped
-        on it (SO_TXTIME): CLOCK_TAI for `etf` and a NIC's launch time, the
-        normal case; CLOCK_MONOTONIC for `fq`."""
+        on it (SO_TXTIME): CLOCK_MONOTONIC for `fq` (the kernel release),
+        CLOCK_TAI for `etf` and a NIC's launch time (the hardware release)."""
         self.sock.setsockopt(socket.SOL_SOCKET, SO_TXTIME, struct.pack("@iI", clockid, 0))
 
     def send_many(self, packets: list[bytes], when: float | list[float] | None = None) -> None:
         """A whole bucket in one system call (sendmmsg). `when`: the
         departure time stamped on every frame, or one per frame, in seconds
         of the clock given to `departure_times`, for a queue that releases at
-        those times (`etf`). Without stamps the frames leave at once: fine on
-        a link that serializes them at the receiver's rate (a 1 GbE link), never
-        onto a 25 G link straight into a 1 G device, which needs a stamp per
-        frame a wire time apart or `send` packet by packet."""
+        those times (`fq`, `etf`). Without stamps the frames leave at once:
+        fine on a link that serializes them at the receiver's rate (a 1 GbE
+        link), never onto a 25 G link straight into a 1 G device, which needs
+        a stamp per frame a wire time apart or `send` packet by packet."""
         global _sendmmsg
         if _sendmmsg is None:
             try:

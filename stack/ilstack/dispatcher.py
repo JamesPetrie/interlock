@@ -14,9 +14,9 @@ lives only here; the response direction's fixed schedule goes here later.
 
 Launching: `process` hands a built bucket to the pacer process, which
 times it from user space on a core of its own; `kernel` stamps it with its
-transmit instant and hands it to the kernel in one call, for an `etf` queue
+transmit instant and hands it to the kernel in one call, for an `fq` queue
 on the interface to release from a kernel timer; `hardware` is `kernel`
-with the queue offloaded to a NIC that releases at a launch time. The
+with an `etf` queue offloaded to a NIC that releases at a launch time. The
 in-loop sender (`loop`) times buckets from this event loop over a memory or
 TCP wire; the tests run on it. Whoever releases assumes every packet can go
 and drops what cannot, as the interlock would have; a dropped packet leaves
@@ -166,41 +166,38 @@ class BucketBuilder:
 
 
 BOOTSTRAP_GRACE = 1e-3         # kernel/hardware release, before the clock is locked: a bucket's departure is at least this far ahead
-                               # (more than an etf queue's delta, or it would send at once)
+                               # (the hand-over done well before it, so the frames leave at the stamp the clock records)
 
 
 class Dispatcher:
     """Builds buckets and gets them onto the wire. `release` says who releases
     a bucket at its instant: `loop`, this event loop on its own timer, frame
     by frame (a TCP tunnel to a software interlock); `kernel`, the
-    interface's queue (`fq`/`etf`) from a kernel timer: the bucket is stamped
-    with its instant and handed over in one call as soon as it is built,
-    `ahead` buckets early; `hardware` is `kernel` with the queue offloaded
-    to the NIC. Both stamp in CLOCK_TAI, the `etf` queue's clock (an `fq`
-    queue takes CLOCK_MONOTONIC: `tai_offset` 0). One stamp per bucket: one
-    timer per bucket in the kernel, and the link's own rate spaces the
-    frames; the queue must keep a bucket's order (`etf` does; `fq` only with
-    a quantum covering a bucket). With `rate_limit`, every frame carries its
-    own time, the instant plus its wire time at `link_mbps`: a bench with a
-    link faster than the device behind it. `lead` is how early the queue
-    sends a frame before its stamp (an `etf` queue in software mode: its
-    delta, see `links.queue_lead`); the stamps are that much later, so a
-    frame leaves at its instant, which is what the clock assumes until its
-    first lock. For the pacer process, `rate_limit` means frame by frame at
-    the wire time."""
+    interface's `fq` queue from a kernel timer, which holds each frame to its
+    stamp: the bucket is stamped with its instant and handed over in one
+    call as soon as it is built, `ahead` buckets early; `hardware` is
+    `kernel` with an `etf` queue offloaded to the NIC. `kernel` stamps in
+    CLOCK_MONOTONIC, `fq`'s clock; `hardware` in CLOCK_TAI, `tai_offset`
+    ahead of it. One stamp per bucket: one timer per bucket in the kernel,
+    and the link's own rate spaces the frames; the queue must keep a
+    bucket's order (`fq` does with the socket's frames in one flow, see
+    `links.check_queue`). With `rate_limit`, every frame carries its own
+    time, the instant plus its wire time at `link_mbps`: a bench with a
+    link faster than the device behind it. For the pacer process,
+    `rate_limit` means frame by frame at the wire time."""
 
     def __init__(self, params: P.Params, wire: Wire | None, clock: Clock | None, log: Log, direction: int,
                  max_slots: int | None = None, link_mbps: float = 1000.0, release: str = "loop", ahead: int = 2,
-                 rate_limit: bool = False, tai_offset: float = 0.0, lead: float = 0.0):
+                 rate_limit: bool = False, tai_offset: float = 0.0):
         self.params, self.wire, self.clock, self.log, self.direction = params, wire, clock, log, direction
         self.release, self.ahead, self.rate_limit, self.tai_offset = release, ahead, rate_limit, tai_offset
-        self.stamp_offset = tai_offset + lead                     # a departure time, monotonic, to the queue's stamp
         self.pace = WIRE_BYTES * 8 / link_mbps / 1e6 if link_mbps else 0.0
         self.event_listeners: list[Callable[[dict], None]] = []
         self.builder = BucketBuilder(params, direction, self._now_bucket, max_slots, link_mbps)
         self.incoming: asyncio.Queue[P.Traffic] = asyncio.Queue()
         self.lost: asyncio.Queue[tuple[P.Id, object]] = asyncio.Queue()   # (id, tag) of packets that did not make it
         self.tags: dict[P.Id, object] = {}                                 # what each built ID stands for
+        self.suspects: set[P.Id] = set()                                   # sent as their bucket closed, not settled yet
         self.stats = Stats()
         self.certificate_listeners: list[Callable[[P.Certificate], None]] = []
         self._jobs: deque[_Job] = deque()
@@ -281,7 +278,7 @@ class Dispatcher:
             self._drop(ids)
             return
         leave = [due + i * self.pace for i in range(len(raws))]           # when each frame is on the wire
-        when = [t + self.stamp_offset for t in leave] if self.rate_limit else due + self.stamp_offset
+        when = [t + self.tai_offset for t in leave] if self.rate_limit else due + self.tai_offset
         try:
             self.wire.send_bucket(raws, when)
         except OSError as e:

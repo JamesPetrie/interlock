@@ -273,7 +273,7 @@ protocol change), or the hypervisor must accept frames for the forced address.
 | 2 | dispatcher and log; frontend and compute; chat end to end through the OpenAI API, then a large model | tcp | 2–3 days | done on the cluster 2026-10-29, with vLLM on one GPU (a large model is a parameter) |
 | 2b | context reuse: context index on the frontend, context store on compute, suffix-only turns | tcp | 1–2 days | — |
 | 3 | software interlock on the link and the verifier on Hetzner; certificate audit and challenges; bucket sync against the software interlock's feedback | tcp | 1–2 days | done on the cluster 2026-10-29 (the verifier CLI runs from the login node or anywhere with `mac.key`; not installed on Hetzner) |
-| 3b | the sender at 1 ms buckets: the pacer process, then the kernel release | raw | 2 days | done on as10 2026-10-29: the pacer process at the FPGA's rate (zero loss over an hour); the kernel release: nothing lost once the dispatcher allows for the etf queue sending its delta early (before that, 270 frames at every start-up), but 2–3 certificate windows per hour do not match the log: two adjacent frames missing in the middle of a bucket after they left the host, which the sync does not reveal (suspected: frames sent back to back after a late etf timer, lost on the FPGA's link), with the sender pinned to its own core or not |
+| 3b | the sender at 1 ms buckets: the pacer process, then the kernel release | raw | 2 days | done on as10 2026-10-30: the pacer process at the FPGA's rate (zero loss over an hour); the kernel release with the sender on a core of its own, 2 frames lost in two hours (4.3e-9, 1 of 7239 certificate windows), after two fixes: the dispatcher allows for the etf queue sending its delta early (before, 270 frames lost at every start), and the release faults in its memory before the first bucket (before, 2-3 certificate windows an hour missed frames at the FPGA's ingress while the sender's log grew); unpinned 4.3e-8; see §8. The stack's release does the same, but its log grows for the whole run (not run for an hour). The kernel release has since moved to `fq` (`orphan_mask 0`): 3.3e-8 over 300.8 M, see §8 |
 | 4 | tap device once the admins deliver; raw-frame ping, then the full stack | tap | 1 day | waiting for the admins (and real-time priority for the pacer process, §6) |
 | 5 | FPGA in the path: bucket sync against the device, pacing to the measured capacity, hash diff FPGA vs software interlock | tap + FPGA | when installed | done on as10 2026-10-29 with the full stack (certificates recompute from the log, tags verify under the FPGA's key); on the cluster when the FPGA arrives |
 
@@ -281,3 +281,52 @@ Each phase runs as a long-lived Slurm batch job per node, resubmitted when
 the time limit hits, with the processes talking over the cluster network.
 The code lives in `stack/` (see its README), the batch scripts in
 `stack/deploy/`.
+
+## 8. Holding 1e-8 at 1 ms buckets
+
+The target: 64 full packets in every 1 ms bucket (the FPGA core's ~1 Gb/s)
+with at most 1e-8 of the frames lost, i.e. at most 2 of the 230.4 M frames
+in an hour. Measured on as10 against the VPK180: loss at the FPGA from the
+certificates (a 1000-bucket window recomputes from the sender's log only if
+the FPGA took every frame of it) and, frame by frame, from the PHY counters
+on both of the FPGA's ports (their balance reproduces the earlier hours'
+known 270-frame start-up loss); the sender's own drops from its event
+report.
+
+| Obstacle | What it looked like | How it was overcome |
+|---|---|---|
+| The bench's 25 G link feeds a ~1 G core | bursts lost at the FPGA | frames stamped a 1 GbE wire time (12.3 µs) apart; on the product's 1 GbE link the wire spaces them |
+| The kernel's real-time budget | a pacer busy ~100 % of every millisecond was parked for 50 ms each second | the pacer spins only the last 50 µs before a send (~90 % duty, under the 95 % budget) |
+| The pacer's own housekeeping | stalls of 100s of µs between trains, bucket tails dropped (1.2e-5) | zero-copy framing; housekeeping only while the next send is at least 100 µs away |
+| Python's pauses in one process | ms pauses from the cyclic collector and from rehashing one dict holding every packet | the collector frozen and off; the log keeps one dict per bucket |
+| Activity on the box | every remaining pacer event (27 frames in two hours, 5.9e-8) was a systemd timer (fwupd) or an ssh login | no logins and the fwupd timer stopped during a run; on the cluster this is what real-time priority and a core of our own are for (§6) |
+| The kernel queue reordering | `fq` let a bucket's shorter frame overtake; the FPGA then rejects every later slot of the message | the socket's frames in one `fq` flow (`orphan_mask 0`; the sender checks the queue at start-up); an `etf` queue, which releases strictly by stamp, keeps the order too |
+| `etf` in software mode | 270 frames lost at every start | it sends up to its delta (300 µs) early, so the first buckets, before the sync lock, landed before their window: the dispatcher read the delta and stamped that much later (`fq`, which the kernel release now uses, sends at the stamp) |
+| Page faults while the sender's log fills | 2-3 certificate windows an hour did not recompute: 1-3 adjacent frames lost at the FPGA's ingress, in 20 s runs only in the first seconds | the kernel release now locks its memory and faults in the log's heap before the first bucket (~90k faults while it filled, ~6k after) |
+| The sender sharing cores | with the faults gone, a sender free to roam the box's other cores still lost 10 frames in an hour (4.3e-8, 2 certificate windows) | the sender on a core of its own, the NIC's interrupts on another; normal priority suffices |
+
+Three measurement traps cost time: a Python receiver drops frames at
+60 000 a second (count with the PHY counters and the certificates instead);
+the FPGA replays the previous run's last bucket when traffic resumes, which
+offsets a far-side capture; and tracing on the box, or logging in, during a
+run itself loses frames.
+
+Results (an hour is 230.4 M frames): the pacer process with departure
+times, one hour, zero lost. The kernel release with the sender on a core of
+its own, two hours: 0 and 2 frames lost (1 of 7239 certificate windows),
+4.3e-9 together, under the target and on par with the C sender's ~1e-8 on
+this bench; unpinned, one hour, 10 lost (4.3e-8). With `fq` (`orphan_mask 0`), the queue the kernel release now uses, pinned: about 10 lost in 300.8 M (3.3e-8), all in one certificate window of the first hour; the second hour's first 70.4 M, none. The guess: `fq` sends a frame whose stamp has passed at once, so a late bucket leaves back to back and the FPGA drops part of the burst; the offloaded `etf` (`hardware` release) remains the option. The remaining event, one
+in two hours, coincides with nothing logged on the box. Two hours are too
+few to bound the rate below 1e-8 with confidence: one event of 2 frames in
+two hours allows up to ~2e-8 at 95 %. The next levers would be an isolated
+core for the sender (`isolcpus`, `nohz_full`: a reboot) and real-time
+priority for it. Each run's queue also dropped one frame that was not ours
+(it passed exactly the dispatcher's 230.4 M), most likely a host frame
+without a departure time.
+
+The open points are the mechanisms: how page faults, or sharing cores, on
+the sender's side cost frames at the FPGA's ingress although the queue
+passed every frame; the fixes do not depend on them. On
+the cluster, 1e-8 is out of reach until the admins grant real-time priority
+and the raw-frame path (§6): the best the pacer reached there under the
+normal scheduler is 5.3e-5 dropped, from the guest's scheduling pauses.

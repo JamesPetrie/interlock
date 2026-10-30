@@ -17,7 +17,7 @@ ilstack/interlock.py   the software interlock
 ilstack/dispatcher.py  IDs, buckets, the release (process, kernel, hardware), loss from the syncs
 ilstack/pacer.py       the pacer process (the `process` release) and its framing
 ilstack/links.py       the TCP and raw links outside the event loop; a bucket in one call, departure times
-ilstack/runtime.py     a process with a deadline: pinning, real-time priority, low jitter, the collector off
+ilstack/runtime.py     a process with a deadline: pinning, real-time priority, low jitter
 ilstack/assembly.py    reassembling and decrypting messages
 ilstack/frontend.py    the frontend core; api.py its HTTP face; tokenizers.py
 ilstack/compute.py     the compute core; engines.py (mock, vLLM)
@@ -60,16 +60,21 @@ releases a bucket at its instant is `--release`:
   on the instant; `--rate-limit` makes it send frame by frame at the link's
   wire time (`--link-mbps`) instead of one hand-over. For hosts without a
   time-aware queue or root (the cluster today).
-- `kernel`: the dispatcher stamps each bucket with its instant (CLOCK_TAI)
-  and hands it to the kernel `ahead` buckets early; an `etf` queue on the
-  interface releases it from a kernel timer (in software mode up to its
-  `delta` early, so the dispatcher reads the delta and stamps that much
-  later). Needs a raw link and, once,
-  `tc qdisc replace dev <if> root etf clockid CLOCK_TAI delta 300000` (`fq`
-  reorders a bucket's shorter frames; with it use `quantum 100000`).
+- `kernel`: the dispatcher stamps each bucket with its instant
+  (CLOCK_MONOTONIC) and hands it to the kernel `ahead` buckets early; an
+  `fq` queue on the interface holds it to the stamp and releases it from a
+  kernel timer (a late wake-up sends late, never drops). Needs a raw link
+  and, once,
+  `tc qdisc replace dev <if> root fq quantum 100000 initial_quantum 100000 flow_limit 2000 limit 10000 orphan_mask 0 timer_slack 1us`:
+  a quantum covering a bucket, room for the buckets parked ahead, and the
+  socket's frames in one flow (`orphan_mask 0`; otherwise fq hashes them by
+  their length and a shorter frame overtakes). Never `maxrate`: fq's pacing
+  reorders. The sender refuses to start on any other queue (the default
+  `fq_codel` ignores departure times) and prints the command.
   `--rate-limit` stamps every frame a wire time apart, for a link faster
   than the device behind it.
-- `hardware`: `kernel` with the queue offloaded to a TSN NIC.
+- `hardware`: `kernel` with an `etf` queue offloaded to a TSN NIC
+  (CLOCK_TAI; `tc qdisc replace dev <if> root etf clockid CLOCK_TAI delta 300000 offload`).
 
 `--target` is where in the bucket the first packet lands, `--fill` how far
 into the bucket packets may still be sent, `--delta-unit` the interlock's
@@ -97,7 +102,7 @@ path, the way the device will see it:
 ilstack timing-stub --listen 0.0.0.0:17001 --bucket-ms 1 --core auto      # receiver: timestamp, judge, sync per bucket
 ilstack timing-send --stub HOST:17001 --bucket-ms 1 --slots 32 --buckets 5000 --release process --core auto
 ilstack timing-send --stub raw:enp1s0np0 --link-mbps 1000 --delta-unit 1e-8 --slots 64 --target 0.05 --fill 0.95 \
-                    --release kernel --rate-limit --ahead 10 --in-flight 10 --core none   # against the FPGA (root, etf queue)
+                    --release kernel --rate-limit --ahead 10 --in-flight 10 --core none   # against the FPGA (root, fq queue)
 ilstack timing-recv --iface enp66s0np0 --seconds 30                        # counts what the device forwards (root)
 ```
 
@@ -112,7 +117,8 @@ receiver drops at 60 000 frames a second.
 Results against the VPK180 on as10 (64 full packets per 1 ms bucket): the pacer process, two hours, 460.8 M frames,
 zero loss at the FPGA and 27 packets dropped by the sender, all in episodes
 of system activity on the box; the kernel release, first slot at 50-52 µs
-for a 50 µs target, lock spread 2 µs, zero loss in partial hours. The
+for a 50 µs target, lock spread 2 µs, 2 frames lost in two hours (4.3e-9)
+with the sender on a core of its own. The
 scripts: `deploy/as10-hour.sh` (pacer process), `deploy/as10-edt.sh`
 (kernel release), `deploy/as10-e2e.sh` (frontend and compute through the
 FPGA with requests and the verifier). Do not log in to the box during a
@@ -124,7 +130,10 @@ memory), a duty cycle under the kernel's 95 % real-time budget (the 50 µs
 spin window), the NIC's completion interrupt for its queue steered to
 another core, the next buckets already queued (`--in-flight`, `--ahead`),
 and a guard at each end of the bucket (`--target 0.05 --fill 0.95`). The
-kernel release needs none of that.
+kernel release needs only the core of its own and the interrupt steered
+away, at normal priority, and its memory locked and faulted in before the
+first bucket (it does that itself; page faults while its log grew cost
+frames at the FPGA).
 
 ## Run on the VCF cluster
 

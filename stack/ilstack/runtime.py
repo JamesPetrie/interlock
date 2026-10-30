@@ -1,7 +1,6 @@
 """How a process that has a deadline sets itself up: a core of its own and
 real-time priority where the OS allows (`pin`), its own sources of pauses
-removed (`low_jitter`), the cyclic collector off (`quiet_collector`), and
-the choice of the pacer's core (`pacer_core`).
+removed (`low_jitter`), and the choice of the pacer's core (`pacer_core`).
 """
 from __future__ import annotations
 
@@ -10,10 +9,12 @@ import os
 
 
 def low_jitter(touch_mb: int = 64) -> str:
-    """ILSTACK_LOWJITTER=1: remove the process's own sources of pauses as
-    far as an unprivileged process can: freeze and stop the cyclic garbage
-    collector, keep freed memory in the heap instead of returning it to the
-    kernel, lock the memory where the limits allow, and pre-touch a heap."""
+    """Remove the process's own sources of pauses as far as the OS allows:
+    freeze and stop the cyclic garbage collector, keep freed memory in the
+    heap instead of returning it to the kernel, lock the memory where the
+    limits allow, and pre-touch `touch_mb` of heap, so that growing into it
+    takes no page faults. A pacer process under ILSTACK_LOWJITTER=1 and the
+    kernel release always."""
     import ctypes
     notes = []
     gc.collect()
@@ -57,17 +58,6 @@ def pin(core: int | None) -> str:
         except (OSError, AttributeError):
             pass
     return ", ".join(notes) or "no pinning available"
-
-
-def quiet_collector() -> None:
-    """Python's cyclic collector off, for an in-process release: a
-    collection pauses the loop for milliseconds once the log is large. What
-    a bucket makes is freed by reference counting; the dispatcher makes no
-    reference cycles in steady state, and the pacer process ran for hours
-    the same way."""
-    gc.collect()
-    gc.freeze()
-    gc.disable()
 
 
 def pacer_core(spec) -> int | None:

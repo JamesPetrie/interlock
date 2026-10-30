@@ -1,6 +1,6 @@
 #!/bin/bash
 # End to end through the FPGA on as10: compute on the server port, frontend on the client port, both releasing buckets
-# through the kernel over raw frames (an etf queue releases the frames at their departure times, a wire time apart for the 25 G links); N requests through the HTTP API, sequential then
+# through the kernel over raw frames (an fq queue releases the frames at their departure times, a wire time apart for the 25 G links); N requests through the HTTP API, sequential then
 # concurrent; health counters; the verifier client (anchor, openings). Run as root from ~/ilstack:
 #   sudo -n nohup bash run/e2e.sh <requests> > run/e2e.out 2>&1 &
 cd /home/amodo/ilstack || exit 1
@@ -13,7 +13,7 @@ MAXTOK=64; [ "$PROMPT_KB" -gt 0 ] && MAXTOK=$((PROMPT_KB * 400))
 env/bin/python -m ilstack.cli keygen $K > /dev/null
 printf '%062d63\n' 0 > $K/mac.key                               # the FPGA's certificate key: 31 zero bytes then 99 (fabric_bridge .key(99))
 for IF in $FE_IF $CO_IF; do
-  tc qdisc replace dev $IF root etf clockid CLOCK_TAI delta 300000
+  tc qdisc replace dev $IF root fq quantum 100000 initial_quantum 100000 flow_limit 2000 limit 10000 orphan_mask 0 timer_slack 1us
 done
 exec 3<>/dev/cpu_dma_latency; printf '\x00\x00\x00\x00' >&3
 COMMON="--keys $K --release kernel --rate-limit --core none --ahead 10 --bucket-ms 1 --bkt-num 1000 --num-slot 64 --device 66 --delta-unit 1e-8 --fill 0.95 --target 0.05 --slots 64 --link-mbps 1000"

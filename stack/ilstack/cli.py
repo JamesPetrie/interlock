@@ -22,7 +22,7 @@ from .clock import SyncClock
 from .crypto import PairKeys
 from .dispatcher import Dispatcher, ProcessDispatcher
 from .log import FileLog, MemoryLog
-from .runtime import pacer_core, quiet_collector
+from .runtime import low_jitter, pacer_core
 
 log = logging.getLogger("ilstack")
 
@@ -62,15 +62,17 @@ async def _dispatcher(a, params, store, direction):
                                  target=a.target, pace=a.rate_limit, delta_unit=a.delta_unit, fill=a.fill)
     if not a.interlock.startswith("raw:"):
         raise SystemExit("kernel and hardware release need a raw link: --interlock raw:<iface>")
-    from .links import CLOCK_TAI, queue_lead
+    from .links import CLOCK_MONOTONIC, CLOCK_TAI, check_queue
     from .wire import RawWire
-    quiet_collector()
-    wire = RawWire(a.interlock[4:], direction, CLOCK_TAI)                 # the etf queue's clock, offloaded or not
-    offset = time.clock_gettime(time.CLOCK_TAI) - time.monotonic()
-    lead = queue_lead(a.interlock[4:])
-    log.info("%s release on %s: the queue sends %.0f us before the stamp", a.release, a.interlock[4:], lead * 1e6)
+    problem = check_queue(a.interlock[4:], a.release, params.num_slot, a.ahead)
+    if problem:
+        raise SystemExit(problem)
+    low_jitter()                                                # no GC pauses, heap kept and locked: a fault costs frames at the FPGA
+    hw = a.release == "hardware"                                # an offloaded etf's clock is CLOCK_TAI; fq's CLOCK_MONOTONIC
+    wire = RawWire(a.interlock[4:], direction, CLOCK_TAI if hw else CLOCK_MONOTONIC)
+    offset = time.clock_gettime(time.CLOCK_TAI) - time.monotonic() if hw else 0.0
     return Dispatcher(params, wire, _clock(a), store, direction, max_slots=a.slots, link_mbps=a.link_mbps,
-                      release=a.release, ahead=a.ahead, rate_limit=a.rate_limit, tai_offset=offset, lead=lead)
+                      release=a.release, ahead=a.ahead, rate_limit=a.rate_limit, tai_offset=offset)
 
 
 def _hostport(s: str) -> tuple[str, int]:
@@ -271,8 +273,8 @@ def main(argv=None) -> None:
     _add_params(c)
     c.add_argument("--interlock", default="127.0.0.1:7002")
     c.add_argument("--release", choices=["process", "kernel", "hardware"], default="process",
-                   help="who releases a bucket at its instant: the pacer process, the interface's fq/etf queue from a kernel "
-                        "timer (raw link), or the NIC at a launch time (etf offload, CLOCK_TAI)")
+                   help="who releases a bucket at its instant: the pacer process, the interface's fq queue from a kernel "
+                        "timer (raw link, CLOCK_MONOTONIC), or the NIC at a launch time (etf offload, CLOCK_TAI)")
     c.add_argument("--rate-limit", action="store_true", help="a link faster than the device behind it: the pacer sends frame by frame at the wire "
                    "time, the kernel release stamps every frame with its own time (default: one hand-over, one stamp per bucket)")
     c.add_argument("--core", default="auto", help="core to pin the pacer to: a number, auto, or none")
@@ -294,8 +296,8 @@ def main(argv=None) -> None:
     _add_params(f)
     f.add_argument("--interlock", default="127.0.0.1:7001")
     f.add_argument("--release", choices=["process", "kernel", "hardware"], default="process",
-                   help="who releases a bucket at its instant: the pacer process, the interface's fq/etf queue from a kernel "
-                        "timer (raw link), or the NIC at a launch time (etf offload, CLOCK_TAI)")
+                   help="who releases a bucket at its instant: the pacer process, the interface's fq queue from a kernel "
+                        "timer (raw link, CLOCK_MONOTONIC), or the NIC at a launch time (etf offload, CLOCK_TAI)")
     f.add_argument("--rate-limit", action="store_true", help="a link faster than the device behind it: the pacer sends frame by frame at the wire "
                    "time, the kernel release stamps every frame with its own time (default: one hand-over, one stamp per bucket)")
     f.add_argument("--core", default="auto", help="core to pin the pacer to: a number, auto, or none")
@@ -342,8 +344,8 @@ def main(argv=None) -> None:
     tx.add_argument("--buckets", type=int, default=1000, help="how many buckets to send")
     tx.add_argument("--target", type=float, default=0.1)
     tx.add_argument("--release", choices=["process", "kernel", "hardware"], default="process",
-                   help="who releases a bucket at its instant: the pacer process, the interface's fq/etf queue from a kernel "
-                        "timer (raw link), or the NIC at a launch time (etf offload, CLOCK_TAI)")
+                   help="who releases a bucket at its instant: the pacer process, the interface's fq queue from a kernel "
+                        "timer (raw link, CLOCK_MONOTONIC), or the NIC at a launch time (etf offload, CLOCK_TAI)")
     tx.add_argument("--rate-limit", action="store_true", help="a link faster than the device behind it: the pacer sends frame by frame at the wire "
                    "time, the kernel release stamps every frame with its own time (default: one hand-over, one stamp per bucket)")
     tx.add_argument("--core", default="auto")
