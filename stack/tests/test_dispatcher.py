@@ -3,6 +3,7 @@ import asyncio
 from harness import make_link, run, settle
 
 from ilstack import packet as P
+from ilstack.verifier import audit, resolve
 
 KC = bytes(range(32))
 
@@ -150,6 +151,90 @@ def test_a_bucket_too_late_is_dropped_and_reported_lost():
         assert (await recv(link.co, 1))[0].id == again.ids[0] == P.Id(P.INBOUND, 1, 0)
         await link.stop()
     run(main())
+
+def _settling(link):
+    """Resolve each certificate's suspects as the frontend does; the results, in order."""
+    results = []
+
+    def on_certificate(cert):
+        suspects = link.fe.suspects_in(cert)
+        gone = resolve(link.params, link.fe.log, cert, suspects)
+        results.append((suspects, gone))
+        if gone:
+            link.fe.not_accepted(gone)
+    link.fe.certificate_listeners.append(on_certificate)
+    return results
+
+
+def test_a_send_returning_after_its_bucket_closed_is_a_suspect():
+    async def main():
+        link = await make_link(P.Params(num_slot=8, bkt_num=4))
+        results = _settling(link)
+
+        def stall_in_send(raw):                                     # slot 1's send stalls past the bucket and is lost
+            if raw[14:16] == b"\x00\x01":
+                link.clocks[0].advance()
+                return True
+            return False
+        link.fe_wire.drop = stall_in_send
+        sent = link.fe.send([b"aaaa", b"bbbb", b"cccc"], KC, tag="r1")
+        await settle()
+        a, b, c = sent.ids
+        assert link.fe.suspects == {b} and link.fe.stats.suspects == 1
+        assert await asyncio.wait_for(link.fe.lost.get(), 1) == (c, "r1")   # after the stall: dropped, not sent late
+        assert link.fe.log.get(b) is not None                       # a suspect stays in the log
+        link.fe_wire.drop = None
+        await link.advance()
+        assert link.fe.suspects == {b}                              # the sync names slot 0: slot 1 stays open
+        await link.advance(4)
+        cert = link.fe.log.certificates[0]
+        assert results == [([b], [b])]                              # the certificate matches without it
+        assert await asyncio.wait_for(link.fe.lost.get(), 1) == (b, "r1")
+        assert link.fe.log.get(b) is None and not link.fe.suspects
+        assert all(audit(link.params, link.fe.log, cert).values())
+        await link.stop()
+    run(main())
+
+
+def test_a_suspect_the_interlock_took_is_settled_by_the_sync():
+    async def main():
+        link = await make_link(P.Params(num_slot=8, bkt_num=4))
+        results = _settling(link)
+
+        def stall_in_send(raw):                                     # slot 0's send stalls past the bucket but gets there
+            if raw[14:16] == b"\x00\x00":
+                link.clocks[0].advance()
+            return False
+        link.fe_wire.drop = stall_in_send
+        sent = link.fe.send([b"aaaa", b"bbbb"], KC, tag="r1")
+        await settle()
+        assert link.fe.suspects == {sent.ids[0]}
+        link.fe_wire.drop = None
+        await link.advance()
+        assert not link.fe.suspects and link.fe.log.get(sent.ids[0]) is not None
+        await link.advance(4)
+        assert results == [([], [])]                                # nothing left to settle: the log matches as it is
+        assert all(audit(link.params, link.fe.log, link.fe.log.certificates[0]).values())
+        await link.stop()
+    run(main())
+
+
+def test_a_loss_no_suspect_explains_stays_a_mismatch():
+    async def main():
+        link = await make_link(P.Params(num_slot=8, bkt_num=4))
+        results = _settling(link)
+        link.fe_wire.drop = lambda raw: raw[14:16] == b"\x00\x01"     # a random loss behind the first accepted slot
+        sent = link.fe.send([b"aaaa", b"bbbb", b"cccc"], KC, tag="r1")
+        await settle()
+        link.fe._suspect([sent.ids[2]])                             # the wrong one is suspected
+        link.fe_wire.drop = None
+        await link.advance(5)
+        assert results == [([sent.ids[2]], None)] and link.fe.lost.empty()
+        assert not link.fe.suspects                                 # settled with the certificate either way
+        assert not audit(link.params, link.fe.log, link.fe.log.certificates[0])["inward"]
+        await link.stop()
+    run(main())
+
 
 class StampWire:
     """A wire that records what the kernel release hands over."""

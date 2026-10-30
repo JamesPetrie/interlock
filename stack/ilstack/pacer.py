@@ -7,7 +7,10 @@ the wire and the clock, sleeps until shortly before a bucket's transmit
 time and spins for the rest, paces the bucket's packets onto the wire,
 reads the wire and timestamps syncs the moment they arrive. A packet it
 cannot send inside its bucket, for whatever reason, it drops, as the
-interlock would have, and says so; the dispatcher learns of every other
+interlock would have, and says so; a packet whose send returns only after
+its bucket closed (a stall inside the send) may or may not have made it,
+and it reports that one as a suspect (a workaround for VM host stalls, see
+`Dispatcher`). The dispatcher learns of every other
 loss the way the protocol provides, from the syncs and the certificates,
 and the node re-issues what got no answer. It runs as its own process,
 pinned to a core where the OS allows, so nothing else delays it.
@@ -16,6 +19,7 @@ The two processes talk over a socketpair in framed messages:
 
     main -> pacer   'B' bucket n (len raw)*n       a bucket to send: its number and its packets in slot order
     pacer -> main   'D' (id)*n                     packets the pacer dropped
+                    'S' (id)*n                     suspects: sent, but the send returned after the bucket closed
                     'R' raw                        a packet received (traffic, certificate)
                     'Y' raw next when              a sync received, the next bucket a packet handed over now can make,
                                                    and the pacer's monotonic time when it said so (shared with the main process)
@@ -159,13 +163,15 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
     def transmit(bucket: int, raws: list[bytes], due: float) -> None:
         """The bucket's packets in slot order: spaced at the link's wire
         time when a rate is given, otherwise as one write that the kernel
-        serializes back to back. What no longer fits the bucket is dropped."""
+        serializes back to back. What no longer fits the bucket is dropped;
+        what was handed over but returned only after the bucket closed is
+        reported as a suspect."""
         nonlocal dropped
         t = time.monotonic()
         errs.append(t - due)                                       # how late the bucket starts leaving
         if t - due > EVENT:
             events.append({"what": "late start", "bucket": bucket, "us": round((t - due) * 1e6)})
-        sent, gone, chunks, send_took = 0, [], [], 0.0
+        sent, gone, chunks, chunk_ids, suspects, send_took = 0, [], [], [], [], 0.0
         for id, raw in zip(map(id_of, raws), raws):
             if gone or not clock.open(bucket):                     # the bucket has run out: the rest are dropped
                 gone.append(id)
@@ -180,8 +186,13 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
                         events.append({"what": "stall", "bucket": bucket, "slot": id.slot, "us": round((ts - tk) * 1e6),
                                        "send_us": round(send_took * 1e6)})   # how much of it was the previous send call
                     t += ts - tk
+                    if not clock.open(bucket):                     # the stall ran the bucket out: dropped, not sent late
+                        gone.append(id)
+                        continue
                 link.send(raw)
                 send_took = time.monotonic() - ts
+                if clock.late(bucket):                             # the send returned after the bucket closed:
+                    suspects.append(id)                            # the interlock may or may not have taken it
                 if send_took > sends[0]:
                     sends[0] = send_took
                 clock.on_sent((bucket, id.slot), ts)
@@ -189,10 +200,17 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
                     print(f"TRACE send {id.pack()} {ts:.6f} {(ts - due) * 1e6:.0f}", file=trace)
             else:
                 chunks.append(raw)
+                chunk_ids.append(id)
                 clock.on_sent((bucket, id.slot), t)
             sent += 1
         if chunks:
             link.send_many(chunks)
+            if clock.late(bucket):
+                suspects.extend(chunk_ids)
+        if suspects:
+            events.append({"what": "suspect", "bucket": bucket, "slot": suspects[0].slot, "n": len(suspects),
+                           "us": round((time.monotonic() - due) * 1e6)})
+            to_main(encode_ids(b"S", suspects))
         if sent > 1:
             per_packet.append((time.monotonic() - t) / sent)
         if gone:

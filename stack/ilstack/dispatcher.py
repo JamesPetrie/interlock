@@ -30,7 +30,21 @@ lost packets: a bucket this node built for whose sync reports nothing
 accepted, or a first accepted slot above this node's first, names packets
 that did not make it; they leave the log again, since no certificate
 covers them, and go to `lost`. Losses behind the first accepted slot show
-in the certificate audit; the node re-issues what gets no answer.
+in the certificate audit; the node re-issues what gets no answer. A packet
+whose send returned only after its bucket closed is a suspect: it stays in
+the log, and the audit tries the certificate without it (`resolve`), so
+that only random losses on the wire are left unexplained.
+Suspects are a WORKAROUND for VM host stalls: on a VM the host can take the
+vCPU away inside a send, at any point of the bucket (VCF: ~1 bucket in
+100k). A bucket handed over in one call (TCP, sendmmsg) makes all its
+packets suspects, though the first ones may have left on time; sent packet
+by packet, only the one whose send spanned the close is. A stall in the
+host after the send returned (its virtual NIC) shows as a random loss
+instead, and under a release queue (fq, etf) the send returns before the
+packet leaves, so a return in time proves nothing there. On bare metal a
+send does not run past its bucket. Should exactness be needed, a sync
+that names the accepted slots (a 64-bit map in its unused reference field)
+would replace the suspects and the search.
 Certificates go to the log, to the listeners (the frontend's audit) and to
 whoever waits for one.
 """
@@ -79,6 +93,7 @@ class Stats:
     dropped_order: int = 0
     dropped_malformed: int = 0
     lost: int = 0                      # packets that did not make it, by the sender's or the syncs' account
+    suspects: int = 0                  # packets whose send returned after their bucket closed (VM stall workaround)
 
 
 @dataclass
@@ -287,6 +302,8 @@ class Dispatcher:
             return
         for i, r in enumerate(raws):
             self.clock.on_sent((number, int.from_bytes(r[14:16], "big")), leave[i])
+        if self.clock.late(number):                                # handed over only as the bucket closed
+            self._suspect([P.Id.unpack(int.from_bytes(r[8:16], "big")) for r in raws])
 
     def _event(self, event: dict) -> None:
         for f in self.event_listeners:
@@ -316,8 +333,27 @@ class Dispatcher:
         """Packets that did not make it: out of the log, and the node is told."""
         for id in ids:
             self.stats.lost += 1
+            self.suspects.discard(id)
             self.log.remove(id)
             self.lost.put_nowait((id, self.tags.get(id)))
+
+    def _suspect(self, ids: list[P.Id]) -> None:
+        """Packets whose send returned only after their bucket closed: the
+        interlock may or may not have taken them. They stay in the log; the
+        sync settles the first of a bucket, the certificate audit the rest
+        (`suspects_in`, `not_accepted`)."""
+        for id in ids:
+            if self.log.get(id) is not None:                       # not reported lost already
+                self.suspects.add(id)
+                self.stats.suspects += 1
+
+    def suspects_in(self, cert: P.Certificate) -> list[P.Id]:
+        """The unsettled suspects in the certificate's interval."""
+        return sorted((id for id in self.suspects if cert.covers(id.bucket)), key=lambda i: i.order)
+
+    def not_accepted(self, ids: list[P.Id]) -> None:
+        """The certificate audit found these suspects missing: lost after all."""
+        self._lost(ids)
 
     # --- the in-loop sender ------------------------------------------------------
 
@@ -333,13 +369,17 @@ class Dispatcher:
                 continue
             bucket = self._buckets.popleft()
             await self.clock.wait_for(bucket.number)
-            gone = []
+            gone, suspects = [], []
             for id, raw, job in bucket.packets:
                 if gone or self.clock.late(bucket.number) or not self.clock.open(bucket.number):
                     gone.append(id)                                 # too late: dropped, as the interlock would have
                     continue
                 self.clock.on_sent((id.bucket, id.slot), time.monotonic())
                 await self.wire.send(raw)
+                if self.clock.late(bucket.number):
+                    suspects.append(id)
+            if suspects:
+                self._suspect(suspects)
             if gone:
                 self._drop(gone)
 
@@ -382,6 +422,8 @@ class Dispatcher:
             self.log.certificate(pkt)
             for listener in self.certificate_listeners:
                 listener(pkt)
+            end = pkt.bkt_start + pkt.bkt_num
+            self.suspects = {id for id in self.suspects if id.bucket >= end}   # the audit had its say on these
             keep = []
             for pred, fut in self._cert_waiters:
                 if not fut.done() and pred(pkt):
@@ -412,6 +454,8 @@ class Dispatcher:
                 if self.clock is not None:
                     self.clock.on_lost(len(lost))
                 self._lost(lost)
+        if sync.first_slot != P.NO_SLOT:
+            self.suspects.discard(P.Id(self.direction, sync.bucket, sync.first_slot))   # accepted, the sync says
         if self._jobs:
             self._build()
 
@@ -519,6 +563,8 @@ class ProcessDispatcher(Dispatcher):
         body = bytes(body)
         if kind == b"D":
             self._drop(decode_ids(body))
+        elif kind == b"S":
+            self._suspect(decode_ids(body))
         elif kind == b"R":
             self._on_packet(body)
         elif kind == b"Y":

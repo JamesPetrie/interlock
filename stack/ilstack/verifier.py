@@ -25,6 +25,7 @@ Only headers and digests travel; no payload ever does.
 """
 from __future__ import annotations
 
+import itertools
 import secrets
 import time
 from dataclasses import dataclass, field
@@ -142,20 +143,75 @@ def audit(params: P.Params, log: Log, cert: P.Certificate, directions: tuple = P
     for name, direction in (("inward", P.INBOUND), ("outward", P.OUTBOUND)):
         if direction not in directions:
             continue
-        digests = []
-        for b in range(cert.bkt_start, cert.bkt_start + cert.bkt_num):
-            records = log.records(direction, b)
-            if records is None:
-                records = []
-                for raw in log.bucket(direction, b):
-                    payload = raw[P.HEADER_SIZE:]
-                    pd = digest_of.get(payload)
-                    if pd is None:
-                        pd = digest_of[payload] = P.pld_digest(payload)
-                    records.append(P.record(len(payload), P.pkt_digest(raw[:P.HEADER_SIZE], pd)))
-            digests.append(P.bkt_digest(records))
-        result[name] = P.cert_digest(digests) == getattr(cert, name)
+        result[name] = P.cert_digest(_bkt_digests(log, cert, direction, digest_of)) == getattr(cert, name)
     return result
+
+
+MAX_CHOICES = 4096             # how many ways of settling a certificate's suspects `resolve` tries at most
+
+
+def resolve(params: P.Params, log: Log, cert: P.Certificate, suspects: list[P.Id],
+            directions: tuple = P.DIRECTIONS) -> list[P.Id] | None:
+    """Which suspects the interlock did not take, as the certificate tells
+(a WORKAROUND for VM host stalls, see `Dispatcher`).
+    A suspect left as its bucket closed, so it may or may not have been
+    accepted; the interlock accepts in order and anything sent after a late
+    packet is later still, so of a bucket's suspects the accepted ones are
+    the first few. Tries those choices, fewest losses first, and returns
+    the suspects to drop for the first that reproduces the certificate: []
+    when the log does as it stands, None when no choice does (a loss no
+    suspect explains) or there are more than `MAX_CHOICES`."""
+    gone: list[P.Id] = []
+    digest_of: dict[bytes, bytes] = {}
+    for name, direction in (("inward", P.INBOUND), ("outward", P.OUTBOUND)):
+        if direction not in directions:
+            continue
+        digests = _bkt_digests(log, cert, direction, digest_of)
+        options = {}                                               # bucket -> [(suspects dropped, bucket digest)]
+        mine = [id for id in suspects if id.dir == direction and cert.covers(id.bucket)]
+        for b in sorted({id.bucket for id in mine}):
+            slots = sorted(id.slot for id in mine if id.bucket == b)
+            raws = log.bucket(direction, b)
+            ids = [P.parse(raw).id for raw in raws]
+            options[b] = []
+            for j in range(len(slots) + 1):                        # the last j suspects not accepted
+                drop = set(slots[len(slots) - j:])
+                options[b].append(([P.Id(direction, b, s) for s in sorted(drop)],
+                                   P.bkt_digest(_record(raw, digest_of) for raw, id in zip(raws, ids) if id.slot not in drop)))
+        choices = list(itertools.product(*(range(len(o)) for o in options.values())))
+        if len(choices) > MAX_CHOICES:
+            return None
+        for choice in sorted(choices, key=sum):
+            trial, drop = list(digests), []
+            for b, j in zip(options, choice):
+                ids, digest = options[b][j]
+                trial[b - cert.bkt_start] = digest
+                drop.extend(ids)
+            if P.cert_digest(trial) == getattr(cert, name):
+                gone.extend(drop)
+                break
+        else:
+            return None
+    return gone
+
+
+def _bkt_digests(log: Log, cert: P.Certificate, direction: int, digest_of: dict[bytes, bytes]) -> list[bytes]:
+    """The log's bucket digests over the certificate's interval."""
+    digests = []
+    for b in range(cert.bkt_start, cert.bkt_start + cert.bkt_num):
+        records = log.records(direction, b)
+        if records is None:
+            records = [_record(raw, digest_of) for raw in log.bucket(direction, b)]
+        digests.append(P.bkt_digest(records))
+    return digests
+
+
+def _record(raw: bytes, digest_of: dict[bytes, bytes]) -> bytes:
+    payload = raw[P.HEADER_SIZE:]
+    pd = digest_of.get(payload)
+    if pd is None:
+        pd = digest_of[payload] = P.pld_digest(payload)
+    return P.record(len(payload), P.pkt_digest(raw[:P.HEADER_SIZE], pd))
 
 
 # --- verifier side -----------------------------------------------------------

@@ -189,9 +189,9 @@ async def run_send(host: str, port: int, params: P.Params, slots: int, buckets: 
     from .clock import SyncClock
     from .dispatcher import Dispatcher, ProcessDispatcher
     from .log import RingLog
-    from .verifier import audit
     from .links import CLOCK_MONOTONIC, CLOCK_TAI, check_queue
     from .runtime import low_jitter
+    from .verifier import audit, resolve
     from .wire import RawWire
     log = RingLog(keep=3 * params.bkt_num)
     if release == "process":
@@ -215,13 +215,19 @@ async def run_send(host: str, port: int, params: P.Params, slots: int, buckets: 
                        rate_limit=rate_limit, tai_offset=offset)
     else:
         raise ValueError(f"unknown release {release!r}")
-    audits = {"certificates": 0, "matching": 0, "device": None}
+    audits = {"certificates": 0, "matching": 0, "resolved": 0, "device": None}
 
     def on_certificate(cert):                                    # the interlock's commitment against our log, as it arrives
         audits["certificates"] += 1
         audits["device"] = cert.device
         if audit(params, log, cert, (P.INBOUND,))["inward"]:
             audits["matching"] += 1
+        elif (suspects := d.suspects_in(cert)) and (gone := resolve(params, log, cert, suspects, (P.INBOUND,))) is not None:
+            audits["matching"] += 1                              # it matches once the suspects it did not take are out
+            audits["resolved"] += 1
+            d.not_accepted(gone)
+            print(f"certificate {cert.bkt_start}..{cert.bkt_start + cert.bkt_num - 1} matches without {len(gone)} "
+                  f"of {len(suspects)} suspects", file=sys.stderr, flush=True)
         else:
             print(f"certificate {cert.bkt_start}..{cert.bkt_start + cert.bkt_num - 1} does not match the log "
                   f"(dropped so far {d.clock_stats().get('dropped')}, lost {d.stats.lost})", file=sys.stderr, flush=True)
@@ -267,6 +273,7 @@ async def run_send(host: str, port: int, params: P.Params, slots: int, buckets: 
              "dispatcher": vars(d.stats),
              "builder": d.builder_stats(), "clock": d.clock_stats(),
              "certificates": audits["certificates"], "certificates_matching_log": audits["matching"],
+             "certificates_resolved": audits["resolved"],
              "certificate_device": audits["device"]}
     drain.cancel()
     await d.stop()

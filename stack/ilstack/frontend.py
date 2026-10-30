@@ -11,8 +11,12 @@ either way it counts.
 
 Every certificate that arrives is audited against the log: if the log does
 not reproduce it, the interlock dropped something the sync did not reveal,
-and a challenge into that interval would fail. The count is reported; a
-later refinement can localise the packet.
+and a challenge into that interval would fail. When the sender left
+suspects in that interval (packets whose send returned after their bucket
+closed), the audit tries the certificate without them; the ones it was
+missing are lost after all and their requests go again at once (a
+workaround for VM host stalls, see `Dispatcher`). What no suspect explains
+is counted.
 
 The verifier's nonce goes out as a nonce packet; the certificate that echoes
 it comes back through the dispatcher.
@@ -28,7 +32,7 @@ from .assembly import Assembler, encrypt
 from .crypto import Pair, PairKeys
 from .dispatcher import Dispatcher
 from .log import Log
-from .verifier import audit
+from .verifier import audit, resolve
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ class FrontendStats:
     unknown_responses: int = 0
     certificates_ok: int = 0
     certificates_mismatched: int = 0
+    certificates_resolved: int = 0     # matched once suspects the interlock did not take were dropped
 
 
 class Frontend:
@@ -131,8 +136,16 @@ class Frontend:
 
     def _audit(self, cert: P.Certificate) -> None:
         res = audit(self.params, self.log, cert)
+        suspects = [] if all(res.values()) else self.dispatcher.suspects_in(cert)
+        gone = resolve(self.params, self.log, cert, suspects) if suspects else None
         if all(res.values()):
             self.stats.certificates_ok += 1
+        elif gone is not None:
+            self.stats.certificates_ok += 1
+            self.stats.certificates_resolved += 1
+            log.info("certificate for buckets %d..%d matches without %d of %d suspects", cert.bkt_start,
+                     cert.bkt_start + cert.bkt_num - 1, len(gone), len(suspects))
+            self.dispatcher.not_accepted(gone)                     # lost after all: their requests go again now
         else:
             self.stats.certificates_mismatched += 1
             log.warning("certificate for buckets %d..%d does not match the log: %s", cert.bkt_start,
