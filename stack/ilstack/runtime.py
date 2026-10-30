@@ -62,9 +62,10 @@ def pin(core: int | None) -> str:
 
 def pacer_core(spec) -> int | None:
     """The core for a pacer process. `auto` takes the highest core this
-    process may run on and keeps this (main) process off it, so that the
-    sender never shares the pacer's core; a number names the core; `none`
-    leaves it to the OS."""
+    process may run on and keeps this (main) process off it and off its SMT
+    siblings where any other core is left, so that the sender never shares
+    the pacer's physical core; a number names the core; `none` leaves it to
+    the OS."""
     if spec in (None, "none"):
         return None
     if spec != "auto":
@@ -73,6 +74,21 @@ def pacer_core(spec) -> int | None:
         return None
     cpus = os.sched_getaffinity(0)
     core = max(cpus)
-    if len(cpus) > 1:
-        os.sched_setaffinity(0, cpus - {core})
+    rest = cpus - {core} - _siblings(core) or cpus - {core}
+    if rest:
+        os.sched_setaffinity(0, rest)
     return core
+
+
+def _siblings(core: int) -> set[int]:
+    """The core's SMT siblings from sysfs (Linux); empty where unknown."""
+    try:
+        with open(f"/sys/devices/system/cpu/cpu{core}/topology/thread_siblings_list") as f:
+            text = f.read().strip()
+    except OSError:
+        return set()
+    out = set()
+    for part in text.split(","):
+        a, _, b = part.partition("-")
+        out.update(range(int(a), int(b or a) + 1))
+    return out
