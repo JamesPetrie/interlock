@@ -7,8 +7,8 @@ from ilstack import packet as P
 from ilstack.dispatcher import ProcessDispatcher
 from ilstack.interlock import RealTicker, SoftwareInterlock
 from ilstack.log import MemoryLog
-from ilstack.pacer import Framer, decode_bucket, decode_ids, encode_bucket, encode_ids, frame, id_of
 from ilstack.links import PacketFramer, queue_problem
+from ilstack.pacer import Framer, decode_bucket, decode_ids, encode_bucket, encode_ids, fitting, frame, id_of
 from ilstack.wire import TcpServerWire
 
 KC = bytes(range(32))
@@ -101,6 +101,24 @@ def test_bucket_builder():
     fixed = BucketBuilder(P.Params(), P.INBOUND, lambda: 0, max_slots=10)
     fixed.adapt(0.9, 100.0)
     assert fixed.max_slots == 10
+
+
+class OpenUntil:
+    """A clock whose bucket takes packets sent before `end`."""
+    def __init__(self, end):
+        self.end = end
+
+    def open(self, bucket, at=None):
+        return at < self.end
+
+
+def test_a_burst_sends_only_what_lands_inside_the_bucket():
+    wire = 12.3e-6                                                  # a full packet at 1 Gb/s
+    assert fitting(OpenUntil(1.0), 0, 0.5, 40, wire) == 40          # room for all
+    assert fitting(OpenUntil(1.0), 0, 1.0 - 10.5 * wire, 40, wire) == 11   # a late start: the first 11
+    assert fitting(OpenUntil(1.0), 0, 1.0, 40, wire) == 0           # nothing left
+    assert fitting(OpenUntil(1.0), 0, 0.99, 40, 0.0) == 40          # no wire time known: all or nothing
+    assert fitting(OpenUntil(1.0), 0, 0.99, 0, wire) == 0
 
 
 def test_pacer_processes_end_to_end():

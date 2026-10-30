@@ -46,9 +46,10 @@ class Clock:
         """Whether a packet stamped `bucket` sent now would arrive after the bucket closed."""
         return False
 
-    def open(self, bucket: int) -> bool:
-        """Whether a packet sent now can still be stamped `bucket`: the bucket
-        has not started, or it has and the packet would land early enough."""
+    def open(self, bucket: int, at: float | None = None) -> bool:
+        """Whether a packet sent now (or at monotonic time `at`) can still be
+        stamped `bucket`: the bucket has not started, or it has and the packet
+        would land early enough."""
         raise NotImplementedError
 
     def on_lost(self, n: int = 1) -> None:
@@ -91,7 +92,7 @@ class ManualClock(Clock):
     def late(self, bucket: int) -> bool:
         return self._bucket > bucket
 
-    def open(self, bucket: int) -> bool:
+    def open(self, bucket: int, at: float | None = None) -> bool:
         return bucket >= self._bucket
 
 
@@ -161,8 +162,9 @@ class SyncClock(Clock):
     def late(self, bucket: int) -> bool:
         return self.synced and self.interlock_bucket() > bucket
 
-    def open(self, bucket: int) -> bool:
-        return self.synced and (time.monotonic() - self._origin) / self.L - bucket < self.fill
+    def open(self, bucket: int, at: float | None = None) -> bool:
+        t = time.monotonic() if at is None else at
+        return self.synced and (t - self._origin) / self.L - bucket < self.fill
 
     def on_sent(self, id: tuple[int, int], t: float) -> None:
         self._sent[id] = t

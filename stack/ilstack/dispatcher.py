@@ -478,7 +478,7 @@ class ProcessDispatcher(Dispatcher):
                  delta_unit: float = 1e-6, pace: bool = True, fill: float = 0.85):
         super().__init__(params, None, None, log, direction, max_slots, link_mbps)
         self._connect, self._core, self._spin = connect, core, spin
-        self._target, self._delta_unit, self._pace_mbps, self._fill = target, delta_unit, (link_mbps if pace else 0.0), fill
+        self._target, self._delta_unit, self._pace, self._fill = target, delta_unit, pace, fill
         self._ahead = ahead
         self._current = 0
         self._current_at = 0.0                                     # when the pacer said so (monotonic, shared with the pacer)
@@ -496,7 +496,8 @@ class ProcessDispatcher(Dispatcher):
         host, port = self._connect
         self._proc = mp.get_context("spawn").Process(
             target=run_pacer, args=(child, host, port, self.params, self.direction,
-                                    self._core, self._spin, self._target, self._pace_mbps, self._delta_unit, self._fill),
+                                    self._core, self._spin, self._target, self.builder.link_mbps, self._delta_unit, self._fill,
+                                    self._pace),
             daemon=True, name=f"pacer-{self.direction:#06x}")
         self._proc.start()
         child.close()

@@ -83,6 +83,14 @@ def id_of(raw: bytes) -> P.Id:
     return P.Id(dir, bucket, slot)
 
 
+def fitting(clock, bucket: int, start: float, n: int, wire: float) -> int:
+    """How many of `n` packets leaving back to back from `start`, a wire
+    time apart, still land inside the bucket."""
+    while n and not clock.open(bucket, start + (n - 1) * wire):
+        n -= 1
+    return n
+
+
 class Framer:
     """Splits a byte stream into frames (kind, body). Bodies are views into
     the chunks as received: no copy per frame, and no shuffling of what is
@@ -113,12 +121,13 @@ class Framer:
 
 def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direction: int,
               core: int | None, spin: float = SPIN, target: float = 0.25,
-              link_mbps: float = 0.0, delta_unit: float = 1e-6, fill: float = 0.85) -> None:
+              link_mbps: float = 0.0, delta_unit: float = 1e-6, fill: float = 0.85, paced: bool = False) -> None:
     """The pacer process. `conn` is its end of the socketpair to the main
     process; `spin` how long before a transmit instant it stops sleeping and
     busy-waits (longer defeats timer coalescing, at the cost of the core);
-    `link_mbps` the rate the receiver can take: packets of a bucket are then
-    spaced at that wire time instead of handed over as one burst (a 25 G
+    `link_mbps` the rate the receiver can take: a burst sends only what
+    lands inside the bucket at that wire time, and with `paced` the packets
+    of a bucket are spaced at it instead of handed over as one burst (a 25 G
     link into a 1 G device needs this); `delta_unit` the interlock's timer
     unit in seconds (10 ns on the FPGA).
 
@@ -128,7 +137,8 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
     make a bucket start late."""
     note = pin(core)
     link = open_link(host, port, direction)
-    pace = WIRE_BYTES * 8 / link_mbps / 1e6 if link_mbps else 0.0
+    wire = WIRE_BYTES * 8 / link_mbps / 1e6 if link_mbps else 0.0  # one packet on the wire, seconds
+    pace = wire if paced else 0.0
     conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 22)
     conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 22)
     conn.setblocking(False)
@@ -162,8 +172,8 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
 
     def transmit(bucket: int, raws: list[bytes], due: float) -> None:
         """The bucket's packets in slot order: spaced at the link's wire
-        time when a rate is given, otherwise as one write that the kernel
-        serializes back to back. What no longer fits the bucket is dropped;
+        time when paced, otherwise as one write that the kernel serializes
+        back to back. What would no longer land inside the bucket is dropped;
         what was handed over but returned only after the bucket closed is
         reported as a suspect."""
         nonlocal dropped
@@ -173,7 +183,7 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
             events.append({"what": "late start", "bucket": bucket, "us": round((t - due) * 1e6)})
         sent, gone, chunks, chunk_ids, suspects, send_took = 0, [], [], [], [], 0.0
         for id, raw in zip(map(id_of, raws), raws):
-            if gone or not clock.open(bucket):                     # the bucket has run out: the rest are dropped
+            if gone or not clock.open(bucket, t + sent * wire):    # the bucket runs out before it leaves: the rest are dropped
                 gone.append(id)
                 continue
             if pace:
@@ -203,6 +213,11 @@ def run_pacer(conn: socket.socket, host: str, port: int, params: P.Params, direc
                 chunk_ids.append(id)
                 clock.on_sent((bucket, id.slot), t)
             sent += 1
+        if chunks:                                                 # the burst leaves now: what would land past the fill limit
+            fit = fitting(clock, bucket, time.monotonic(), len(chunks), wire)   # is dropped, not sent late (a stall since
+            gone[:0] = chunk_ids[fit:]                             # the checks above)
+            sent -= len(chunks) - fit
+            del chunks[fit:], chunk_ids[fit:]
         if chunks:
             link.send_many(chunks)
             if clock.late(bucket):
