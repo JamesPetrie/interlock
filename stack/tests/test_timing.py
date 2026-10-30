@@ -23,7 +23,7 @@ def test_stub_judges_and_syncs():
     assert P.parse(s.close(2)) == P.Sync(P.INBOUND, 2)
     sync = P.parse(s.close(3))
     assert sync.first_slot == 0 and 90 <= sync.delta <= 110
-    assert s.counts == [2] and 390 <= s.spans[0] <= 410 and "late 1" in s.report()
+    assert s.counts == {2: 1} and all(390 <= v <= 410 for v in s.spans) and "late 1" in s.report()
 
 
 def _stub(port):

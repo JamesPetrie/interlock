@@ -18,7 +18,7 @@ import socket
 import struct
 import sys
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 
 from . import packet as P
 from .links import PacketFramer
@@ -34,10 +34,17 @@ def _pct(xs: list, p: float):
     return xs[min(len(xs) - 1, int(p * len(xs)))]
 
 
-def _summary(name: str, xs: list) -> str:
-    if not xs:
+def _summary(name: str, hist: Counter) -> str:
+    """Percentiles of a histogram (value -> count): one walk over the distinct values."""
+    n = sum(hist.values())
+    if not n:
         return f"{name}: no data"
-    return f"{name}: n={len(xs)} p50={_pct(xs, .5)} p90={_pct(xs, .9)} p99={_pct(xs, .99)} p999={_pct(xs, .999)} max={max(xs)}"
+    marks, out, seen = [(.5, "p50"), (.9, "p90"), (.99, "p99"), (.999, "p999")], [], 0
+    for v in sorted(hist):
+        seen += hist[v]
+        while marks and seen > int(marks[0][0] * n):
+            out.append(f"{marks.pop(0)[1]}={v}")
+    return f"{name}: n={n} " + " ".join(out) + f" max={max(hist)}"
 
 
 class Stub:
@@ -53,10 +60,10 @@ class Stub:
         self.early = 0
         self.other = 0
         self.lateness: dict[int, int] = defaultdict(int)       # buckets late -> count
-        self.counts: list[int] = []
-        self.first_landed: list[int] = []                       # us into the bucket
-        self.last_landed: list[int] = []
-        self.spans: list[int] = []
+        self.counts: Counter = Counter()                        # histograms: value -> buckets; a report stays cheap
+        self.first_landed: Counter = Counter()                  # us into the bucket
+        self.last_landed: Counter = Counter()
+        self.spans: Counter = Counter()
 
     def bucket_at(self, t: float) -> int:
         return int((t - self.t0) / self.L)
@@ -87,15 +94,15 @@ class Stub:
         b = self.open.pop(bucket, None)
         if b is None:
             return P.Sync(self.direction, bucket).pack()
-        self.counts.append(b["n"])
-        self.first_landed.append(b["first"])
-        self.last_landed.append(b["last"])
-        self.spans.append(b["last"] - b["first"])
+        self.counts[b["n"]] += 1
+        self.first_landed[b["first"]] += 1
+        self.last_landed[b["last"]] += 1
+        self.spans[b["last"] - b["first"]] += 1
         return P.Sync(self.direction, bucket, b["first_slot"], b["first"]).pack()
 
     def report(self) -> str:
         total = self.accepted + self.late + self.early
-        lines = [f"buckets with traffic {len(self.counts)} of {self.closed + 1}; packets {total}: accepted {self.accepted}, "
+        lines = [f"buckets with traffic {sum(self.counts.values())} of {self.closed + 1}; packets {total}: accepted {self.accepted}, "
                  f"late {self.late} ({100 * self.late / max(1, total):.2f}%), early {self.early}, other {self.other}",
                  "  " + _summary("packets per bucket", self.counts),
                  "  " + _summary("first slot landed (us)", self.first_landed),
