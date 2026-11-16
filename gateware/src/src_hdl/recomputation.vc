@@ -1,0 +1,6 @@
+-F shared.vc
+./recomp_pkg.sv
+./log2_iter.sv
+./norm_chk.sv
+./recomp_feed.sv
+./recomp_ilock_core.sv
