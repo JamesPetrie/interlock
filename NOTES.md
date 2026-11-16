@@ -118,3 +118,16 @@ open('/root/.actel/vault/index.xml','w').write(t)
 "
 ./build.sh
 ```
+
+## PF_INIT_MONITOR on Libero >= 2025.1
+
+The 2.0.307 package the kit was validated with downloads under Libero 2025.x
+but extracts only its `core_xml` fileset (3 files instead of 9; a clean
+wipe-and-refetch gives the same), so `create_and_configure_core` fails with the
+Spirit error above. 2.0.308 (`min_libero_version` 2025.1) is complete.
+`common.tcl` therefore keeps 2.0.307 as the kit's pin and switches to 2.0.308
+when `get_libero_release` reports 2025.1 or newer; nothing to edit. `PF_CCC`
+2.2.220 configures fine on 2025.x (it is also what `PF_IOD_CDR_CCC` 2.1.111
+depends on). A 2025.x install keeps its vault at
+`/usr/local/microchip/common/vault`, not `~/.actel/vault` as the recipe above
+assumes.

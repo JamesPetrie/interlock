@@ -3,37 +3,57 @@
 # Runs Libero against gateware/script.tcl, logs to /tmp, sha256s the .job.
 #
 # Usage:
-#   ./build.sh               # build only (workload core = fabric_bridge)
-#   ./build.sh --core DESIGN # interlock core: workload (default) | recomputation
-#                            # (same as INTERLOCK_CORE=DESIGN; see gateware/common.tcl)
-#   ./build.sh --scp DST     # scp the .job to DST after build (e.g., laptop:~/Desktop/)
+#   ./build.sh [--board mpf300|mpf200] [--core workload|recomputation] [--scp DST]
+#
+#   --board   target board (default mpf300):
+#               mpf300  MPF300-EVAL-KIT             (silicon-validated with Libero v2024.2)
+#               mpf200  MPF200-ETH-SENSOR-BRIDGE-R2  Libero >= v2025.2 — the MPF200T die is
+#                       only Silver-licensed from 2025.2 on; 2024.2 refuses it outright.
+#             The build box runs Libero SoC v2025.2 (on PATH). To use another install:
+#               LIBERO_BIN=/usr/local/microchip/Libero_SoC_2025.2/Libero_SoC/Designer/bin/libero
+#   --core    interlock core (default workload; see gateware/common.tcl):
+#               workload       fabric_bridge
+#               recomputation  recomp_ilock_core
+#   --scp DST scp the .job to DST after build (e.g., laptop:~/Desktop/)
+#
+# Environment: INTERLOCK_BOARD (same as --board), INTERLOCK_CORE (same as --core),
+#              LIBERO_BIN (default: `libero` on PATH).
 set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 GATEWARE_DIR="$REPO_ROOT/gateware"
 LOG="/tmp/build_$(date +%Y%m%d_%H%M%S).log"
 JOB_PATH="$GATEWARE_DIR/Libero_Project/designer/top/export/top.job"
+LIBERO_BIN="${LIBERO_BIN:-libero}"
+BOARD="${INTERLOCK_BOARD:-mpf300}"
 
 # Parse args
 SCP_DEST=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --board) BOARD="$2"; shift 2 ;;
         --scp) SCP_DEST="$2"; shift 2 ;;
         --core) export INTERLOCK_CORE="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
+case "$BOARD" in
+    mpf300|mpf200) ;;
+    *) echo "unknown board '$BOARD' (expected mpf300 or mpf200)" >&2; exit 1 ;;
+esac
+export INTERLOCK_BOARD="$BOARD"
 
 # Wipe stale build dir
 echo "=== wiping stale Libero_Project ==="
 rm -rf "$GATEWARE_DIR/Libero_Project"
 
 # Run Libero
-echo "=== starting build at $(date -Iseconds) (core: ${INTERLOCK_CORE:-workload}) ==="
-echo "log: $LOG"
+echo "=== starting build for board=$BOARD core=${INTERLOCK_CORE:-workload} at $(date -Iseconds) ==="
+echo "libero: $LIBERO_BIN"
+echo "log:    $LOG"
 cd "$GATEWARE_DIR"
 SECONDS=0
-if ! libero "SCRIPT:script.tcl" 2>&1 | tee "$LOG" 2>&1; then
+if ! "$LIBERO_BIN" "SCRIPT:script.tcl" 2>&1 | tee "$LOG" 2>&1; then
     echo "BUILD FAILED — see $LOG"
     exit 1
 fi
@@ -49,7 +69,7 @@ fi
 SIZE=$(stat -c%s "$JOB_PATH")
 DIGEST=$(sha256sum "$JOB_PATH" | awk '{print $1}')
 echo
-echo "=== build done in ${ELAPSED}s ==="
+echo "=== build done in ${ELAPSED}s (board=$BOARD) ==="
 echo "  .job:    $JOB_PATH"
 echo "  size:    $SIZE bytes"
 echo "  sha256:  $DIGEST"

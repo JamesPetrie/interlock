@@ -1,0 +1,3 @@
+*.o
+test_sgmii
+test_basex

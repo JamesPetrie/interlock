@@ -1,8 +1,34 @@
-# Mi-V firmware source (iteration 2)
+# Mi-V firmware
 
 The Mi-V soft RISC-V CPU on the FPGA runs this firmware to bring up both
-CoreTSE MACs and both ports of the VSC8575 PHY. The firmware is baked
-into eNVM at FPGA configuration time and copied to TCM at boot.
+CoreTSE MACs and whatever sits behind them on the board. The image is baked
+into sNVM at FPGA configuration time and copied to TCM at boot.
+
+For the MPF300-EVAL-KIT (the target) the firmware is `main.c` (iteration 2,
+notes below) and the image Libero uses is `iog_cdr.hex` — the silicon-validated
+SoftConsole build. It brings up both MACs, both VSC8575 copper ports and the
+ZL30364 clock generator.
+
+## Building (no SoftConsole needed)
+
+```
+apt-get install gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf   # once
+make mpf300                  # -> build/iog_cdr_mpf300.hex (compare only; see below)
+make install-mpf300          # replaces the committed iog_cdr.hex — do this on purpose only
+```
+
+The `Makefile` mirrors the AN4623 SoftConsole project's flags
+(`-march=rv32im -mabi=ilp32 -O0`, `miv-rv32-ram.ld`) and fetches the HAL,
+drivers and linker script from Microchip's AN4623 bundle into `build/an4623/`
+(sha256-pinned; set `AN4623_DIR` to reuse an existing extraction).
+`fw_stubs.c` stands in for the newlib-only `miv_rv32_syscall.c` under picolibc.
+Output hex files are rebased to TCM offset 0 (no type-04 records), the format
+`src_cfg/RAM.cfg` expects. The committed `iog_cdr.hex` is the SoftConsole build
+of `main.c`; the Makefile deliberately does not overwrite it.
+
+---
+
+# `main.c` — MPF300-EVAL-KIT firmware (iteration 2 notes)
 
 A single Mi-V core handles both PHYs — there's only one CPU instance in
 the SmartDesign. The firmware does all the register writes sequentially
@@ -115,10 +141,7 @@ working with this OpenOCD/Mi-V combo — see `docs/firmware-iteration.md`.
 ## Files NOT in this directory
 
 The rest of the AN4623 SoftConsole project (drivers, HAL, linker scripts)
-lives in Microchip's distribution at:
-
-```
-/root/fpga/an4623/mpf_an4623_v2022p3_df/SoftConsole_Project/iog_cdr/
-```
-
-Only `main.c` is overridden here.
+is Microchip's distribution; `make fetch` downloads and unpacks it into
+`build/an4623/` (gitignored), or point `AN4623_DIR` at an existing copy such
+as `/root/fpga/an4623/`. Only the `.c` sources in this directory
+are ours.

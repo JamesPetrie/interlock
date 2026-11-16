@@ -1,0 +1,218 @@
+# Microchip I/O Physical Design Constraints file
+#
+# Board:  MPF200-ETH-SENSOR-BRIDGE-R2  (PolarFire Ethernet Sensor Bridge, Rev 2)
+# Device: MPF200T, package FCG784
+#
+# Sources for every pin below (all cross-checked against Libero's FCG784
+# package table, data/aPA5M/PA5M200/fcg784.ddf):
+#   - PolarFire_Ethernet_Sensor_Bridge_REV2_Schematics.pdf (Nov 2025):
+#       sheet 6  SFP+ connectors 1,2 + XCVR quad 2 + 156.25 MHz oscillator
+#       sheet 11 GPIO Bank 5: SFP sideband, FT4232H UART C/D, 50 MHz oscillator
+#       sheet 4  HSIO Bank 1: LED1..LED4
+#       sheet 12 JTAG / DEVRST_N
+#   - PolarFire Ethernet Sensor Bridge User Guide DS50003757B (Jan 2026):
+#       table 1-2 (clocks), table 3-1 (LEDs), 3.10 (50 MHz on B7)
+#   - Microchip reference design github.com/microchip-fpga-solutions/mpf200-esb-mipi
+#       (same XCVR pads, REF_CLK_PAD_P/N = W23/W24, LED1 = AD18 LVCMOS12)
+#
+# Bank voltages: Bank 5 is the 3.3 V GPIO bank (oscillator, FTDI, SFP sideband);
+# HSIO Bank 1 is the 1.2 V DDR4 bank that also carries the four debug LEDs.
+
+
+#
+# User Locked I/O Bank Settings
+#
+
+set_iobank -bank_name Bank5  \
+    -vcci 3.30               \
+    -fixed true
+
+set_iobank -bank_name Bank1  \
+    -vcci 1.20               \
+    -fixed true
+
+
+#
+# User Locked I/O settings
+#
+
+# ---- Fabric reference clock: 50 MHz oscillator X2 (DSC1001DL5) -> PF_CCC_0 --
+set_io -port_name CLK_50M  \
+    -pin_name B7           \
+    -fixed true            \
+    -io_std LVCMOS33       \
+    -DIRECTION INPUT
+
+
+# ---- UART: FT4232H channel C (UART_C) -> /dev/ttyUSBn on the host ----------
+# FTDI_UART_C_TXD (FTDI output) -> FPGA RX; FTDI_UART_C_RXD -> FPGA TX.
+set_io -port_name RX  \
+    -pin_name E6      \
+    -fixed true       \
+    -io_std LVCMOS33  \
+    -DIRECTION INPUT
+
+
+set_io -port_name TX  \
+    -pin_name D6      \
+    -fixed true       \
+    -io_std LVCMOS33  \
+    -DIRECTION OUTPUT
+
+
+# ---- SFP sideband (Bank 5, 10 kOhm pull-ups on the board) -------------------
+# TX_DISABLE must be driven low or the module stays dark (pull-up = disabled).
+set_io -port_name SFP1_TX_DISABLE  \
+    -pin_name F4                   \
+    -fixed true                    \
+    -io_std LVCMOS33               \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name SFP2_TX_DISABLE  \
+    -pin_name G4                   \
+    -fixed true                    \
+    -io_std LVCMOS33               \
+    -DIRECTION OUTPUT
+
+
+# Loss-of-signal inputs gate CoreTSE SIGNAL_DETECT (high = no signal / no module).
+set_io -port_name SFP1_LOS  \
+    -pin_name F3            \
+    -fixed true             \
+    -io_std LVCMOS33        \
+    -DIRECTION INPUT
+
+
+set_io -port_name SFP2_LOS  \
+    -pin_name K8            \
+    -fixed true             \
+    -io_std LVCMOS33        \
+    -DIRECTION INPUT
+
+
+# Unused sideband, listed for reference (not ports of this design):
+#   SFP1_MOD_DEF0 E3   SFP2_MOD_DEF0 F2   SFP1_TX_FAULT E2   SFP2_TX_FAULT L8
+#   SFP1_RS G5         SFP2_RS E1         SFP1_SCL D3 / SDA D1   SFP2_SCL C2 / SDA C1
+
+
+# ---- LEDs: HSIO Bank 1, active high -----------------------------------------
+# LED1 port-0 link, LED2 port-1 link, LED3 port-0 packet heartbeat,
+# LED4 sticky 8b/10b decode error on either port.
+set_io -port_name LINK_OK  \
+    -pin_name AD18         \
+    -fixed true            \
+    -io_std LVCMOS12       \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LINK_OK_1  \
+    -pin_name AE18           \
+    -fixed true              \
+    -io_std LVCMOS12         \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name PKT_LED  \
+    -pin_name AB19         \
+    -fixed true            \
+    -io_std LVCMOS12       \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name LED_RCG_ERR  \
+    -pin_name AC18             \
+    -fixed true                \
+    -io_std LVCMOS12           \
+    -DIRECTION OUTPUT
+
+
+#
+# Dedicated Peripheral I/O Settings
+#
+
+#
+# Ports using Dedicated Pins (transceiver quad 2 and its reference clock)
+#
+
+# 156.25 MHz LVDS oscillator X1 -> XCVR_2A_REFCLK_P/N
+set_io -port_name XCVR_REFCLK_P  \
+    -pin_name W23                \
+    -DIRECTION INPUT
+
+
+set_io -port_name XCVR_REFCLK_N  \
+    -pin_name W24                \
+    -DIRECTION INPUT
+
+
+# SFP1 (cage "B", silkscreen SFP1) = XCVR_2 lane 0 — interlock port 0 (frontend side)
+set_io -port_name SFP1_RXD_P  \
+    -pin_name AC23            \
+    -DIRECTION INPUT
+
+
+set_io -port_name SFP1_RXD_N  \
+    -pin_name AC24            \
+    -DIRECTION INPUT
+
+
+set_io -port_name SFP1_TXD_P  \
+    -pin_name AC27            \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name SFP1_TXD_N  \
+    -pin_name AC28            \
+    -DIRECTION OUTPUT
+
+
+# SFP2 (cage "A", silkscreen SFP2) = XCVR_2 lane 1 — interlock port 1 (compute side)
+set_io -port_name SFP2_RXD_P  \
+    -pin_name AD25            \
+    -DIRECTION INPUT
+
+
+set_io -port_name SFP2_RXD_N  \
+    -pin_name AD26            \
+    -DIRECTION INPUT
+
+
+set_io -port_name SFP2_TXD_P  \
+    -pin_name AE27            \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name SFP2_TXD_N  \
+    -pin_name AE28            \
+    -DIRECTION OUTPUT
+
+
+#
+# JTAG (dedicated pins, FCG784 balls; routed to the on-board FlashPro5 and
+# used by COREJTAGDEBUG for the Mi-V debugger)
+#
+
+set_io -port_name TCK  \
+    -pin_name J9       \
+    -DIRECTION INPUT
+
+
+set_io -port_name TDI  \
+    -pin_name J14      \
+    -DIRECTION INPUT
+
+
+set_io -port_name TDO  \
+    -pin_name H11      \
+    -DIRECTION OUTPUT
+
+
+set_io -port_name TMS  \
+    -pin_name J12      \
+    -DIRECTION INPUT
+
+
+set_io -port_name TRSTB  \
+    -pin_name K14        \
+    -DIRECTION INPUT

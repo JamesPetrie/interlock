@@ -33,6 +33,15 @@ select_profile -name $simuprofile1
 
 puts "Project created successfully"
 
+# Newer Libero releases keep the IP-repository list per user; on a fresh install
+# only the local catalog is registered and every download_core fails with "Could
+# not download the core".  restore_repositories re-registers Microchip's three
+# web repositories (SgCore, DirectCore, Firmware).  Older releases lack the
+# command -> guarded.
+if {[catch {restore_repositories} _err]} {
+    puts "  (restore_repositories not available/needed: $_err)"
+}
+
 # Pre-download all pinned IP cores into the vault. This mirrors the pattern
 # Microchip's own SmartHLS-2024.2 PolarFire scripts use.  The list is assembled
 # per board in common.tcl ($board_cores).

@@ -48,17 +48,17 @@ Setting up the Raspberry Pi side of the demo:
 ```
 interlock/
 ├── gateware/             # Microchip Tcl + RTL — patched AN4623 source for now
-│   ├── common.tcl        # board/device table + IP versions pinned at v2024.2-compatible values
+│   ├── common.tcl        # pinned IP versions + device settings
 │   ├── script.tcl        # Top-level: new_project → download cores → source flow scripts
 │   └── src/
-│       ├── 1_create_design.tcl    # HDL import + IP components; sources boards/<board>/top.tcl
+│       ├── 1_create_design.tcl    # HDL import, IP components, SmartDesign assembly
 │       ├── 2_constrain_design.tcl # I/O & timing constraints
 │       ├── 4_implement_design.tcl # SYNTH → P&R → verify_timing → export
 │       ├── 5_program_design.tcl   # generate .job
 │       ├── src_components/        # per-IP create_and_configure_core calls
-│       ├── boards/mpf300_eval/    # MPF300 kit: PHY-side IP configs, top SmartDesign, .pdc/.sdc/.ios
+│       ├── boards/mpf300_eval/    # IOD CDR components, top SmartDesign, .pdc/.sdc/.ios
 │       ├── src_hdl/               # custom Verilog (SSDetect.v from upstream + our additions)
-│       └── src_softconsole/       # Mi-V firmware hex (precompiled iog_cdr.hex for now)
+│       └── src_softconsole/       # Mi-V firmware: main.c + iog_cdr.hex, Makefile
 ├── build.sh              # one-shot build wrapper
 ├── setup.sh              # pre-build environment checks
 ├── README.md
