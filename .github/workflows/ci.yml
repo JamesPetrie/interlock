@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  pull_request:
+    # Only when something these checks depend on changes.
+    paths:
+      - gateware/src/src_hdl/**
+      - Makefile
+      - .github/workflows/ci.yml
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        design: [workload, recomputation]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Verilator
+        uses: veryl-lang/setup-verilator@v2
+        with:
+          version: "5.046" # same version as used locally
+
+      - name: Compile ${{ matrix.design }}
+        run: make compile DESIGN=${{ matrix.design }}
