@@ -1,6 +1,6 @@
 # Second PF_IOD_CDR — drives Port 1's SGMII pins. Parameters mirror C0 exactly;
 # only the component_name differs.
-create_and_configure_core -core_vlnv {Actel:SystemBuilder:PF_IOD_CDR:2.4.110} -component_name {PF_IOD_CDR_C1} -params {\
+create_and_configure_core -core_vlnv Actel:SystemBuilder:PF_IOD_CDR:$PF_IOD_CDRver -component_name {PF_IOD_CDR_C1} -params {\
 "CLOCK_TYPE:ASYNCHRONOUS" \
 "DATA_RATE:1250" \
 "DATA_WIDTH:9" \

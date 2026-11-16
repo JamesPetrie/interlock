@@ -2,7 +2,7 @@
 # Family: PolarFire
 # Part Number: MPF300TS-1FCG1152I
 # Create and Configure the core component CORETSE_0
-create_and_configure_core -core_vlnv {Actel:DirectCore:CORETSE:3.2.119} -component_name {CORETSE_0} -params {\
+create_and_configure_core -core_vlnv Actel:DirectCore:CORETSE:$CORETSEver -component_name {CORETSE_0} -params {\
 "GMII_TBI:1"  \
 "MDIO_PHYID:18"  \
 "PACKET_SIZE:11"  \

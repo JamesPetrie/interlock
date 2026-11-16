@@ -19,7 +19,7 @@
 # -------------------------------------------------------------------------------------------
 # Link I/O constraints (PDC) and associate constraints to Place and route tool
     
-import_files -io_pdc {./src/src_constraints/io_constraints.pdc}
+import_files -io_pdc $board_dir/io_constraints.pdc
  
 # -------------------------------------------------------------------------------------------
 # Link Floorplanning constraints (PDC) and associate constraints to Place and route tool
@@ -34,7 +34,7 @@ derive_constraints_sdc
 # Link user SDC constraints (not expressed by the derived constraints)
 # and optionally associate to Synthesis, Place and Route and Timing Verification as needed
 # Below is an example
-import_files -sdc {./src/src_constraints/timing_user_constraints.sdc}
+import_files -sdc $board_dir/timing_user_constraints.sdc
 organize_tool_files -tool {SYNTHESIZE} \
     -file ${PrjLocation}/constraint/top_derived_constraints.sdc \
     -file ${PrjLocation}/constraint/timing_user_constraints.sdc \
