@@ -10,6 +10,20 @@ specifics), see `/root/fpga/CLAUDE.md` — that file is auto-loaded when CWD
 is anywhere under `/root/fpga/`, including this repo, so don't duplicate
 its content here.
 
+## Boards
+
+`gateware/common.tcl` selects the board from the `INTERLOCK_BOARD`
+environment variable (default `mpf300` = MPF300-EVAL-KIT) and holds the
+per-board device settings and IP-version table. Board-specific Libero files
+live in `gateware/src/boards/<board>/`: `components.tcl` (PHY-side IP + init
+monitor), `top.tcl` (the top SmartDesign), `io_constraints.pdc`,
+`timing_user_constraints.sdc`, and `prog_io_states.ios` where needed.
+Everything else (`src_components/`, `src_hdl/`, flow scripts) is shared.
+
+Rules: never hardcode a die/package or IP version outside `common.tcl`;
+component Tcl files use `$<CORE>ver`; anything that differs between boards
+goes under `boards/<board>/`, not behind `if` blocks in shared files.
+
 ## What's pinned in `gateware/common.tcl`
 
 The AN4623 bundle was written for Libero v2022.3. In v2024.2 the following
@@ -19,8 +33,8 @@ versions, surfaced as "Cannot find Spirit core configuration file"):
 - `PF_INIT_MONITOR` 2.0.304 → **2.0.307**
 - `PF_IOD_CDR` 2.4.105 → **2.4.110**
 
-Both `common.tcl` AND `src/src_components/<core>.tcl` reference the
-version — edit both when bumping.
+Component Tcl files take their version from `common.tcl` (`$CORETSEver`,
+`$PF_CCCver`, ...), so a bump is a one-line change in the version table.
 
 ## Build / iterate loop
 
@@ -46,9 +60,9 @@ For a self-contained RTL addition (e.g., a packet counter on LEDs):
 1. Drop the SystemVerilog file into `gateware/src/src_hdl/`.
 2. Add `import_files -hdl_source {./src/src_hdl/<file>.sv}` in
    `gateware/src/1_create_design.tcl`.
-3. Wire it into the SmartDesign in the same Tcl (`sd_instantiate_component`,
-   `sd_connect_pins`, etc.).
-4. Add pin constraints in `gateware/src/src_constraints/`.
+3. Wire it into the SmartDesign in `gateware/src/boards/mpf300_eval/top.tcl`
+   (`sd_instantiate_component`, `sd_connect_pins`, etc.).
+4. Add pin constraints in `gateware/src/boards/mpf300_eval/io_constraints.pdc`.
 5. `./build.sh`.
 
 For firmware changes (the precompiled `iog_cdr.hex` lives at

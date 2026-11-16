@@ -36,8 +36,11 @@ generate_design_initialization_data
 # the PHY keeps running un-reset with MDC/MDIO floating and can wedge; the
 # post-flash CORERESET_PF pulse (~us) is far below the 2 ms warm-reset
 # minimum (VSC8575 datasheet VMDS-10457, Table 165) and cannot recover it.
-configure_tool -name {IO_PROGRAMMING_STATE} \
-    -params "ios_file:[file normalize ./src/src_constraints/prog_io_states.ios]"
+# (board-specific: only boards with a PHY to hold in reset ship an .ios file)
+if {[file exists $board_dir/prog_io_states.ios]} {
+    configure_tool -name {IO_PROGRAMMING_STATE} \
+        -params "ios_file:[file normalize $board_dir/prog_io_states.ios]"
+}
 
 # Configure and generate programming file data
 # Examples for configuring the programming files TBD

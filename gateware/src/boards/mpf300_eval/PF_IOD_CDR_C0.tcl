@@ -2,7 +2,7 @@
 # Family: PolarFire
 # Part Number: MPF300TS-1FCG1152I
 # Create and Configure the core component PF_IOD_CDR_C0
-create_and_configure_core -core_vlnv {Actel:SystemBuilder:PF_IOD_CDR:2.4.110} -component_name {PF_IOD_CDR_C0} -params {\
+create_and_configure_core -core_vlnv Actel:SystemBuilder:PF_IOD_CDR:$PF_IOD_CDRver -component_name {PF_IOD_CDR_C0} -params {\
 "CLOCK_TYPE:ASYNCHRONOUS" \
 "DATA_RATE:1250" \
 "DATA_WIDTH:9" \
