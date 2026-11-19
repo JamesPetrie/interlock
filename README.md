@@ -28,14 +28,6 @@ attestation via the PolarFire System Controller).
 | Bucket-timing / throughput characterization on the bench | ✓ 2026-08-11 |
 | Build-config knobs (`TOP={recomp,prod}`, `BUCKET_MS={100,1}`) merged to main | — (`feature/build-config-knobs`) |
 
-> **What `./build.sh` builds:** the **workload** (production) core,
-> `fabric_bridge` — bidirectional, sync both ways — at **1 ms buckets**.
-> `./build.sh --core recomputation` (or `INTERLOCK_CORE=recomputation`)
-> builds the recomp core instead; there sync + cert traffic appears on port 0
-> only and only the 0→1 direction is processed — a silent port 1 is expected
-> on that build, not a setup problem. Details in `docs/SETUP.md` §9
-> ("Which design did I just build?").
-
 **New to the project?** Read in order:
 [`docs/interlock-overview.md`](docs/interlock-overview.md) (what the device
 is and its security properties) → this README →
