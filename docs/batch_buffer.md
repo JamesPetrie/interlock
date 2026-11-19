@@ -57,7 +57,7 @@ The lock changes state only **at a tick** — an ack arriving mid-period is latc
 
 ## Sizing
 
-Each bank must absorb continuous line-rate transfer for a full bucket period plus one prefix word per record, with the reserved one-max-entry tail on top — so the fill side never stalls mid-bucket, and an overrunning record degrades to an abandoned record rather than wedging the bank. The default is **320 KB per bank** (enough for ~2.5 ms of full 1 GbE — generous against the 1 ms production bucket), 640 KB per direction, all in on-chip LSRAM — no external memory in the data path.
+Each bank must hold the most one bucket can carry, plus one prefix word per record, with the reserved one-max-entry tail on top — an overrunning record degrades to an abandoned record rather than wedging the bank. Upstream admission sets that maximum: a bucket has `CANON_NUM_SLOT` slots, `canon_proc` admits at most one packet per slot, and a record is at most `MAX_ENTRY_WORDS`. The `BANK_WORDS` default covers a full bucket with the tail. Both banks are in on-chip LSRAM — no external memory in the data path.
 
 ## Open items
 -  The module and this doc say *batch*; the rest of the path now calls the drain group a *bucket*.

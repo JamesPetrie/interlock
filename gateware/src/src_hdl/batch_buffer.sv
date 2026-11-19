@@ -5,10 +5,11 @@ module batch_buffer
   // compile-order scanner; qualified references alone are not tracked
   import eth_pkg::*;
 #(
-  // Bank size in 32-bit words: gigabit line rate x batch period + one
-  // max-packet carryover, with margin (see the doc's sizing section).
-  // Default 320 KB per bank (supports at most 2.5ms of full 1 GbE).
-  parameter int unsigned BANK_WORDS    = (320 * 1024) / 4,
+  // Bank size in words: one bucket's records plus the reserved
+  // one-max-entry tail (see the doc's sizing section).
+  // Default 100 KB per bank: a full bucket of CANON_NUM_SLOT records of at
+  // most MAX_ENTRY_WORDS each.
+  parameter int unsigned BANK_WORDS    = (100 * 1024) / 4,
   // Grace period (time for last writes to finish after the tick)
   // Max ~1.5KB packet with at least 4B/cycle
   parameter int unsigned GRACE_PERIOD  = 512, // 375 with safety margin

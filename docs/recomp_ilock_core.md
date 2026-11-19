@@ -43,7 +43,7 @@ The frontend's side of the contract:
 - stamp the **current bucket** — sync packets arrive back on port 0 for calibration, and bucket integrity gates admission;
 - hold staging while a challenge runs: packets arriving mid-challenge are committed upstream but dropped whole by the feed, so a violation reads as lost packets in the digest, never as corrupted framing;
 
-LIMITATION: Because a slice occupies a whole bucket, the 320 KB bank is a flat cap of **~320 KB per challenge slice**.
+LIMITATION: Because a slice occupies a whole bucket, the bank is a flat cap on the **challenge slice**. Its size is the `BANK_WORDS` override on this core's buffer instance: the buffer's default is sized for `CANON_NUM_SLOT` slots per bucket, and this core does not apply the slot-order rule yet.
 
 ## Ingress path
 
