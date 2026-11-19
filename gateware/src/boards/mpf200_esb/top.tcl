@@ -1,6 +1,6 @@
 # Creating SmartDesign top — MPF200-ETH-SENSOR-BRIDGE-R2 variant.
 #
-# Same core as boards/mpf300_eval/top.tcl (two CoreTSE MACs <-> recomp_ilock_core,
+# Same core as boards/mpf300_eval/top.tcl (two CoreTSE MACs <-> interlock core,
 # Mi-V + CoreAPB3 peripherals, CORERESET_PF, PF_CCC 50 -> 80 MHz) with the PHY
 # side swapped for this board:
 #
@@ -284,8 +284,10 @@ sd_mark_pins_unused -sd_name ${sd_name} -pin_names {CORETSE_1:TSM_INTR}
 sd_mark_pins_unused -sd_name ${sd_name} -pin_names {CORETSE_1:TSM_CONTROL}
 sd_mark_pins_unused -sd_name ${sd_name} -pin_names {CORETSE_1:MDC}
 
-# recomp_ilock_core — routes BOTH MAC directions through the fabric.
-sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {recomp_ilock_core} -hdl_file {hdl\recomp_ilock_core.sv} -instance_name {core_0}
+# Interlock core — routes BOTH MAC directions through the fabric. $ilock_core
+# (common.tcl, from INTERLOCK_CORE) is fabric_bridge (workload, default) or
+# recomp_ilock_core (recomputation); same ports, so the wiring below is shared.
+sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name $ilock_core -hdl_file [format {hdl\%s.sv} $ilock_core] -instance_name {core_0}
 
 
 
