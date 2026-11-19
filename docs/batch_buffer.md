@@ -59,7 +59,5 @@ The lock changes state only **at a tick** — an ack arriving mid-period is latc
 
 Each bank must hold the most one bucket can carry, plus one prefix word per record, with the reserved one-max-entry tail on top — an overrunning record degrades to an abandoned record rather than wedging the bank. Upstream admission sets that maximum: a bucket has `CANON_NUM_SLOT` slots, `canon_proc` admits at most one packet per slot, and a record is at most `MAX_ENTRY_WORDS`. The `BANK_WORDS` default covers a full bucket with the tail. Both banks are in on-chip LSRAM — no external memory in the data path.
 
-The recomputation core does not apply the slot-order rule yet, so its bucket is not bounded this way; it overrides `BANK_WORDS` on its buffer instance (see `recomp_ilock_core.md`).
-
 ## Open items
 -  The module and this doc say *batch*; the rest of the path now calls the drain group a *bucket*.

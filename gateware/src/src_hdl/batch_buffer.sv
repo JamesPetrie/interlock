@@ -7,8 +7,8 @@ module batch_buffer
 #(
   // Bank size in words: one bucket's records plus the reserved
   // one-max-entry tail (see the doc's sizing section).
-  // The default covers a full bucket: CANON_NUM_SLOT records of at most
-  // MAX_ENTRY_WORDS each.
+  // Default 100 KB per bank: a full bucket of CANON_NUM_SLOT records of at
+  // most MAX_ENTRY_WORDS each.
   parameter int unsigned BANK_WORDS    = (100 * 1024) / 4,
   // Grace period (time for last writes to finish after the tick)
   // Max ~1.5KB packet with at least 4B/cycle
