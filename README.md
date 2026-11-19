@@ -23,16 +23,17 @@ attestation via the PolarFire System Controller).
 | Per-packet hash commits + HMAC-authenticated traffic certificates on silicon | ✓ 2026-06-16 |
 | DGX Spark bench: flash chain (x86 VM) + two test NICs | ✓ (`docs/flashing-and-testing.md`) |
 | Multi-turn inference CLI demo over the interlock, in-band ZK challenge | ✓ 2026-06-18 (branch `docs/inference-cli-app`) |
-| Recomp interlock core (recompute-feed path) — what `main` builds today | ✓ on silicon 2026-07-20 |
+| Recomp interlock core (recompute-feed path) — `./build.sh --core recomputation` | ✓ on silicon 2026-07-20 |
 | Prod top at 1 ms buckets (bidirectional, ~6e-6 drop rate at ~97 Mb/s each way) | ✓ on silicon 2026-07-20 (branch `build/prod-1ms`) |
 | Bucket-timing / throughput characterization on the bench | ✓ 2026-08-11 |
 | Build-config knobs (`TOP={recomp,prod}`, `BUCKET_MS={100,1}`) merged to main | — (`feature/build-config-knobs`) |
 
-> **What `./build.sh` on `main` builds today:** the **recomp** top with a
-> **100 ms testing-override bucket period**. Sync + cert traffic appears on
-> port 0 only and only the 0→1 direction is processed — a silent port 1 is
-> expected on this build, not a setup problem. The production bidirectional
-> top at 1 ms is branch `build/prod-1ms`. Details in `docs/SETUP.md` §9
+> **What `./build.sh` builds:** the **workload** (production) core,
+> `fabric_bridge` — bidirectional, sync both ways — at **1 ms buckets**.
+> `./build.sh --core recomputation` (or `INTERLOCK_CORE=recomputation`)
+> builds the recomp core instead; there sync + cert traffic appears on port 0
+> only and only the 0→1 direction is processed — a silent port 1 is expected
+> on that build, not a setup problem. Details in `docs/SETUP.md` §9
 > ("Which design did I just build?").
 
 **New to the project?** Read in order:
