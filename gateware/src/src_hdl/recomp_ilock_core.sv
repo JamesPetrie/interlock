@@ -230,6 +230,10 @@ module recomp_ilock_core
   wire         recomp_valid;
 
   batch_buffer #(
+    // recomp is not on the slot rule yet (canon_proc skips the slot-order
+    // check here), so the bank caps the whole challenge slice: keep 320 KB
+    // instead of the 64-slot default
+    .BANK_WORDS   ((320 * 1024) / 4),
     .GRACE_PERIOD (3000),  // matches prod's drop-gated ingress
     .OUTPUT_SWAP  (1)
   ) buffer_chl (

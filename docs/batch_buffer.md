@@ -57,7 +57,9 @@ The lock changes state only **at a tick** — an ack arriving mid-period is latc
 
 ## Sizing
 
-Each bank must absorb continuous line-rate transfer for a full bucket period plus one prefix word per record, with the reserved one-max-entry tail on top — so the fill side never stalls mid-bucket, and an overrunning record degrades to an abandoned record rather than wedging the bank. The default is **320 KB per bank** (enough for ~2.5 ms of full 1 GbE — generous against the 1 ms production bucket), 640 KB per direction, all in on-chip LSRAM — no external memory in the data path.
+Each bank must hold the most one bucket can carry, plus one prefix word per record, with the reserved one-max-entry tail on top — an overrunning record degrades to an abandoned record rather than wedging the bank. Upstream admission sets that maximum: a bucket has `CANON_NUM_SLOT` = 64 slots, `canon_proc` admits at most one packet per slot, and a packet is at most 1500 bytes. With the 4-byte prefix that is 64 × 1504 = 96,256 bytes, 97,760 with the tail. The default is **100 KB per bank** (102,400 bytes), 200 KB per direction, all in on-chip LSRAM — no external memory in the data path.
+
+The recomputation core does not apply the slot-order rule yet, so its bucket is not bounded this way; it overrides `BANK_WORDS` to 320 KB (see `recomp_ilock_core.md`).
 
 ## Open items
 -  The module and this doc say *batch*; the rest of the path now calls the drain group a *bucket*.

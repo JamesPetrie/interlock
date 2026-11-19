@@ -77,7 +77,7 @@ NOARR      = 0xFFFFFFFFFFFFFFFF
 PLD_LEN    = 1436                     # DATA = 64 hdr + 1436 = 1500 (max canonical)
 FRAME_LEN  = 14 + HDR_BYTES + PLD_LEN # 1514 on-wire (sans FCS)
 WIRE_NS    = (FRAME_LEN + 24) * 8     # +preamble/FCS/IFG -> ns per frame at 1G
-BANK_CAP   = 300_000                  # stay under the 320 KB bucket bank
+BANK_CAP   = 96_000                   # stay under the 100 KB bucket bank
 
 if TUNED:
     try:
