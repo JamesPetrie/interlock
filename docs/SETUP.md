@@ -354,17 +354,17 @@ The `.job` file lands in
 
 ### Which design did I just build?
 
-`main` currently builds the **recomp** top (`recomp_ilock_core`, since
-commit `66a7c3c`) with a **100 ms testing-override bucket period**
-(commit `a3376e3`). On a recomp build, sync + cert traffic appears on
-**port 0 only** and only the 0→1 direction is processed — **a silent
-port 1 is expected, not a broken setup.**
+`INTERLOCK_CORE` (or `./build.sh --core <design>`; read in
+`gateware/common.tcl`) picks the interlock core the top instantiates as
+`core_0`. The build prints `=== interlock core: ... ===` near the top of
+its log.
 
-The production top (bidirectional `fabric_bridge` wiring, sync both
-ways) at the real 1 ms bucket period is branch **`build/prod-1ms`**
-(validated on silicon 2026-07-20). Build-time selection knobs
-(`TOP={recomp,prod}`, `BUCKET_MS={100,1}`) exist on
-`feature/build-config-knobs`, not yet merged.
+- **`workload`** (default): the production core, `fabric_bridge` —
+  bidirectional, sync both ways — at the real **1 ms** bucket period.
+- **`recomputation`**: the recomp core, `recomp_ilock_core` (1 s bucket,
+  one per certificate). Sync + cert traffic appears on **port 0 only** and
+  only the 0→1 direction is processed — **a silent port 1 is expected,
+  not a broken setup.**
 
 ### Tests (separate from synthesis)
 

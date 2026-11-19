@@ -3,8 +3,10 @@
 # Runs Libero against gateware/script.tcl, logs to /tmp, sha256s the .job.
 #
 # Usage:
-#   ./build.sh            # build only
-#   ./build.sh --scp DST  # scp the .job to DST after build (e.g., laptop:~/Desktop/)
+#   ./build.sh               # build only (workload core = fabric_bridge)
+#   ./build.sh --core DESIGN # interlock core: workload (default) | recomputation
+#                            # (same as INTERLOCK_CORE=DESIGN; see gateware/common.tcl)
+#   ./build.sh --scp DST     # scp the .job to DST after build (e.g., laptop:~/Desktop/)
 set -eo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -17,6 +19,7 @@ SCP_DEST=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --scp) SCP_DEST="$2"; shift 2 ;;
+        --core) export INTERLOCK_CORE="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 1 ;;
     esac
 done
@@ -26,7 +29,7 @@ echo "=== wiping stale Libero_Project ==="
 rm -rf "$GATEWARE_DIR/Libero_Project"
 
 # Run Libero
-echo "=== starting build at $(date -Iseconds) ==="
+echo "=== starting build at $(date -Iseconds) (core: ${INTERLOCK_CORE:-workload}) ==="
 echo "log: $LOG"
 cd "$GATEWARE_DIR"
 SECONDS=0

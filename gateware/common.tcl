@@ -9,6 +9,26 @@ if {![info exists ::env(INTERLOCK_BOARD)] || $::env(INTERLOCK_BOARD) eq ""} {
     set board $::env(INTERLOCK_BOARD)
 }
 
+# ---- Interlock core selection ----------------------------------------------
+# INTERLOCK_CORE (environment variable) picks the interlock core the top
+# SmartDesign instantiates as core_0; default workload. Names match the
+# Makefile's DESIGN=<design> (and src_hdl/<design>.vc):
+#   workload       fabric_bridge      production (inference-workload) interlock
+#   recomputation  recomp_ilock_core  recomputation interlock
+# Both cores have the same port list, so top.tcl's wiring is shared.
+if {![info exists ::env(INTERLOCK_CORE)] || $::env(INTERLOCK_CORE) eq ""} {
+    set ilock_design workload
+} else {
+    set ilock_design $::env(INTERLOCK_CORE)
+}
+switch -- $ilock_design {
+    workload      { set ilock_core fabric_bridge }
+    recomputation { set ilock_core recomp_ilock_core }
+    default {
+        error "unknown INTERLOCK_CORE '$ilock_design' (known: workload, recomputation)"
+    }
+}
+
 # IP versions shared by all boards (pinned at the v2024.2-compatible values —
 # see NOTES.md for why PF_INIT_MONITOR/PF_IOD_CDR had to move off the AN4623 pins).
 set CoreAPB3ver {4.2.100}
@@ -57,6 +77,7 @@ switch -- $board {
     }
 }
 puts "=== interlock board: $board ($die_eval $eval_package speed=$eval_part_speed range=$eval_part_range VDD=$eval_die_voltage) ==="
+puts "=== interlock core: $ilock_design ($ilock_core) ==="
 
 
 #tool profiles

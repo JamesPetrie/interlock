@@ -294,8 +294,10 @@ sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {SSDetect} -hdl_f
 # project but unused.
 sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {tse1_loopback} -hdl_file {hdl\tse1_loopback.sv} -instance_name {tse1_loopback_0}
 
-# recomp_ilock_core — routes BOTH MAC directions through the fabric.
-sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name {recomp_ilock_core} -hdl_file {hdl\recomp_ilock_core.sv} -instance_name {core_0}
+# Interlock core — routes BOTH MAC directions through the fabric. $ilock_core
+# (common.tcl, from INTERLOCK_CORE) is fabric_bridge (workload, default) or
+# recomp_ilock_core (recomputation); same ports, so the wiring below is shared.
+sd_instantiate_hdl_module -sd_name ${sd_name} -hdl_module_name $ilock_core -hdl_file [format {hdl\%s.sv} $ilock_core] -instance_name {core_0}
 
 
 

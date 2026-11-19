@@ -30,9 +30,7 @@
 module fabric_bridge
   import canon_pkg::*;          // CANON_DIR_*, CANON_*_HDR_BYTES (used on the canon_proc instances)
 #(
-  // REVISIT: testing override — 100 ms buckets; production is 1 ms buckets.
-  //parameter int unsigned BKT_MS     = 1,
-  parameter int unsigned BKT_MS     = 100,
+  parameter int unsigned BKT_MS     = 1,    // 1 ms buckets (production)
   // Derived from BKT_MS; parameters, not localparams, only so the TBs can
   // override them (sim needs a short bucket AND few buckets per cert).
   parameter int unsigned TIMER_END     = (80_000 * BKT_MS) - 1, // 80 MHz clk
